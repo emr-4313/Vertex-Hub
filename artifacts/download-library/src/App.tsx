@@ -22,10 +22,18 @@ import {
   Upload,
   FileUp,
   Trash2,
+  Lock,
+  LogOut,
+  User,
+  Crown,
+  AlertCircle,
+  Box,
 } from 'lucide-react';
 import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
 
-type Category = 'Design' | 'Templates' | 'Audio' | 'Video' | 'Code' | 'Documents';
+const OWNER_EMAIL = 'pukiler23@gmail.com';
+
+type Category = 'Places' | 'Games' | 'Maps' | 'Systems' | 'Templates' | 'Assets';
 
 type FileRecord = {
   id: string;
@@ -43,6 +51,7 @@ type FileRecord = {
   artLabel: string;
   updated: string;
   verified: boolean;
+  fileName?: string;
 };
 
 const ART_THEMES = [
@@ -56,18 +65,9 @@ const ART_THEMES = [
   { id: 'art-slate', name: 'Slate', hex: '#475569' },
 ] as const;
 
-const CATEGORIES: Category[] = ['Design', 'Templates', 'Audio', 'Video', 'Code', 'Documents'];
+const CATEGORIES: Category[] = ['Places', 'Games', 'Maps', 'Systems', 'Templates', 'Assets'];
 
-const defaultFiles: FileRecord[] = [
-  { id: 'signal-kit', title: 'Signal / Editorial Kit', category: 'Design', author: 'Mara Voss', initials: 'MV', size: '42.8 MB', downloads: '2.4k', rating: 4.9, reviews: 86, tags: ['figma', 'editorial', 'system'], description: 'A sharp, flexible editorial system for teams that publish often.', art: 'art-cobalt', artLabel: 'SIGNAL', updated: '2h ago', verified: true },
-  { id: 'night-shift', title: 'Night Shift — LUT Pack', category: 'Video', author: 'Milo August', initials: 'MA', size: '1.2 GB', downloads: '8.1k', rating: 4.8, reviews: 143, tags: ['luts', 'cinema', 'dark'], description: 'Twenty-four restrained grades for sodium streets and blue hours.', art: 'art-amber', artLabel: 'NIGHT\nSHIFT', updated: '5h ago', verified: true },
-  { id: 'quiet-hours', title: 'Quiet Hours — Loop Library', category: 'Audio', author: 'Nia Rhee', initials: 'NR', size: '318 MB', downloads: '1.7k', rating: 4.7, reviews: 51, tags: ['ambient', 'loops', 'wav'], description: 'Textural loops for late work, patient interfaces, and long walks.', art: 'art-plum', artLabel: 'QUIET\nHOURS', updated: '1d ago', verified: false },
-  { id: 'field-notes', title: 'Field Notes / Research Docs', category: 'Documents', author: 'Owen Park', initials: 'OP', size: '8.6 MB', downloads: '934', rating: 4.6, reviews: 29, tags: ['research', 'notion', 'pdf'], description: 'A considered set of note-taking structures for messy early thinking.', art: 'art-mint', artLabel: 'FIELD\nNOTES', updated: '1d ago', verified: true },
-  { id: 'mono-objects', title: 'Mono Objects — 3D Set', category: 'Design', author: 'Keiko Tan', initials: 'KT', size: '84 MB', downloads: '3.2k', rating: 4.9, reviews: 74, tags: ['blender', 'objects', '3d'], description: 'Thirty-six low-poly objects with a quiet, tactile point of view.', art: 'art-lilac', artLabel: 'MONO\nOBJECTS', updated: '2d ago', verified: true },
-  { id: 'starter-stack', title: 'Starter Stack / Astro', category: 'Code', author: 'Jules Martin', initials: 'JM', size: '3.4 MB', downloads: '5.8k', rating: 4.8, reviews: 112, tags: ['astro', 'starter', 'tailwind'], description: 'An opinionated starting point for small, fast sites that last.', art: 'art-teal', artLabel: 'STARTER\nSTACK', updated: '3d ago', verified: true },
-  { id: 'soft-edges', title: 'Soft Edges — Type Specimen', category: 'Templates', author: 'Ada Kline', initials: 'AK', size: '18.1 MB', downloads: '1.1k', rating: 4.5, reviews: 34, tags: ['type', 'print', 'indesign'], description: 'A print-ready specimen template for making typography the story.', art: 'art-coral', artLabel: 'SOFT\nEDGES', updated: '4d ago', verified: false },
-  { id: 'archive-index', title: 'Archive Index / CSV Toolkit', category: 'Documents', author: 'Theo Bell', initials: 'TB', size: '2.8 MB', downloads: '764', rating: 4.4, reviews: 18, tags: ['csv', 'data', 'workflow'], description: 'Small utilities for keeping personal collections legible and useful.', art: 'art-slate', artLabel: 'ARCHIVE\nINDEX', updated: '5d ago', verified: true },
-];
+const defaultFiles: FileRecord[] = [];
 
 const uploadedBlobs = new Map<string, { blob: Blob; fileName: string }>();
 
@@ -82,21 +82,16 @@ function formatBytes(bytes: number, decimals = 1): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
-function inferCategory(fileName: string): Category {
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  if (['fig', 'psd', 'ai', 'sketch', 'svg', 'blend', 'fbx', 'obj', 'png', 'jpg', 'jpeg'].includes(ext)) return 'Design';
-  if (['mp4', 'mov', 'avi', 'mkv', 'cube', 'look', 'webm'].includes(ext)) return 'Video';
-  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'mid', 'aiff'].includes(ext)) return 'Audio';
-  if (['ts', 'tsx', 'js', 'jsx', 'json', 'py', 'rs', 'go', 'html', 'css', 'zip', 'tar', 'gz', 'sh', 'sql'].includes(ext)) return 'Code';
-  if (['pdf', 'doc', 'docx', 'txt', 'md', 'csv', 'xlsx', 'rtf', 'epub'].includes(ext)) return 'Documents';
-  return 'Templates';
+function isRobloxFile(fileName: string): boolean {
+  const lower = fileName.toLowerCase();
+  return lower.endsWith('.rbxl') || lower.endsWith('.rbxlx');
 }
 
 function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 0 || !parts[0]) return 'ME';
+  const parts = name.trim().split(/[\s@._]+/);
+  if (parts.length === 0 || !parts[0]) return 'PU';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 function downloadFile(file: FileRecord) {
@@ -105,49 +100,189 @@ function downloadFile(file: FileRecord) {
     const url = URL.createObjectURL(custom.blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = custom.fileName || `${file.title}.bin`;
+    anchor.download = custom.fileName || `${file.title}.rbxl`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
     return;
   }
-  const content = `VERTEX ARCHIVE NOTE\n\n${file.title}\nBy ${file.author}\n\n${file.description}\n\nTags: ${file.tags.join(', ')}\n`;
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const content = `ROBLOX PLACE FILE NOTE\n\nTitle: ${file.title}\nFormat: RBXL / RBXLX\nCreator: ${file.author}\n\nDescription: ${file.description}\nTags: ${file.tags.join(', ')}\n`;
+  const blob = new Blob([content], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `${file.id}-vertex.txt`;
+  anchor.download = `${file.title.replace(/\s+/g, '_')}.rbxl`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
 }
 
-function Sidebar({ active, onOpenUpload }: { active: string; onOpenUpload: () => void }) {
+function AuthModal({
+  isOpen,
+  onClose,
+  onLogin,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onLogin: (email: string) => void;
+}) {
+  const [emailInput, setEmailInput] = useState(OWNER_EMAIL);
+  const [error, setError] = useState('');
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = emailInput.trim().toLowerCase();
+    if (trimmed !== OWNER_EMAIL.toLowerCase()) {
+      setError(`Only ${OWNER_EMAIL} is authorized to upload files.`);
+      return;
+    }
+    setError('');
+    onLogin(OWNER_EMAIL);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        type="button"
+        data-testid="button-auth-modal-backdrop"
+        onClick={onClose}
+        className="absolute inset-0 bg-black/75 backdrop-blur-sm"
+        aria-label="Close modal"
+      />
+      <div
+        className="toast-in surface relative w-full max-w-[420px] rounded-2xl border border-white/[.12] p-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="mb-4 flex items-center justify-between border-b border-white/[.08] pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="grid h-8 w-8 place-items-center rounded-lg bg-amber-500/10 text-amber-400">
+              <Crown size={18} />
+            </div>
+            <div>
+              <h2 className="font-display text-[16px] font-bold text-[#f1f2e9]">Creator Sign In</h2>
+              <p className="font-mono-ui text-[9px] uppercase tracking-[.12em] text-[#788279]">
+                Authorized Upload Access
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            data-testid="button-close-auth-modal"
+            onClick={onClose}
+            className="icon-button rounded-lg p-1.5 text-[#828b84] hover:text-white"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
+              Authorized Email
+            </label>
+            <input
+              type="email"
+              required
+              data-testid="input-auth-email"
+              value={emailInput}
+              onChange={(e) => {
+                setEmailInput(e.target.value);
+                setError('');
+              }}
+              placeholder="pukiler23@gmail.com"
+              className="w-full rounded-lg border border-white/[.1] bg-[#12161f] px-3.5 py-2.5 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
+            />
+            {error && (
+              <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-rose-400">
+                <AlertCircle size={12} /> {error}
+              </p>
+            )}
+            <p className="mt-1.5 text-[10px] text-[#7a847b]">
+              Upload permissions are restricted exclusively to <span className="font-mono text-[#d0d6cc]">{OWNER_EMAIL}</span>.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button
+              type="button"
+              data-testid="button-cancel-auth"
+              onClick={onClose}
+              className="rounded-lg border border-white/[.1] px-3.5 py-2 text-[11px] font-semibold text-[#8e978f] hover:bg-white/[.05]"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              data-testid="button-submit-auth"
+              className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-[11px] font-extrabold text-[#171a1f] shadow-md transition-all hover:bg-[#e4e7dd]"
+            >
+              <User size={13} strokeWidth={2.4} />
+              <span>Sign in</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({
+  active,
+  isOwner,
+  currentUser,
+  onOpenUpload,
+  onOpenAuth,
+  onLogout,
+}: {
+  active: string;
+  isOwner: boolean;
+  currentUser: string | null;
+  onOpenUpload: () => void;
+  onOpenAuth: () => void;
+  onLogout: () => void;
+}) {
   const [, setLocation] = useLocation();
   return (
-    <aside className="sidebar hidden w-[248px] shrink-0 border-r border-white/[.07] px-4 py-5 lg:flex lg:flex-col justify-between">
+    <aside className="sidebar hidden w-[252px] shrink-0 border-r border-white/[.07] px-4 py-5 lg:flex lg:flex-col justify-between">
       <div>
         <div className="mb-6 flex items-center gap-3 px-3">
           <img src="/vertex-logo.png" alt="Vertex logo" className="h-9 w-9 rounded-xl object-cover shadow-[0_0_0_5px_rgba(255,255,255,.08)]" />
           <div>
             <div className="font-display text-[19px] font-bold tracking-[-.05em] text-[#f1f2e9]">Vertex</div>
-            <div className="font-mono-ui text-[8px] uppercase tracking-[.18em] text-[#6e756f]">community archive</div>
+            <div className="font-mono-ui text-[8px] uppercase tracking-[.18em] text-[#6e756f]">Roblox Archive</div>
           </div>
         </div>
 
-        <button
-          type="button"
-          data-testid="button-sidebar-upload"
-          onClick={onOpenUpload}
-          className="mb-6 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-[12px] font-extrabold text-[#11151c] shadow-[0_0_20px_rgba(255,255,255,.08)] transition-all hover:bg-[#e6e8de] hover:shadow-[0_0_25px_rgba(255,255,255,.16)] active:scale-[0.98]"
-        >
-          <Upload size={15} strokeWidth={2.4} />
-          <span>Upload file</span>
-        </button>
+        {isOwner ? (
+          <button
+            type="button"
+            data-testid="button-sidebar-upload"
+            onClick={onOpenUpload}
+            className="mb-6 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-[12px] font-extrabold text-[#11151c] shadow-[0_0_20px_rgba(255,255,255,.08)] transition-all hover:bg-[#e6e8de] hover:shadow-[0_0_25px_rgba(255,255,255,.16)] active:scale-[0.98]"
+          >
+            <Upload size={15} strokeWidth={2.4} />
+            <span>Upload .RBXL</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            data-testid="button-sidebar-auth"
+            onClick={onOpenAuth}
+            className="mb-6 flex w-full items-center justify-center gap-2 rounded-xl border border-white/[.12] bg-[#171c26] px-3.5 py-2.5 text-[11px] font-bold text-[#c7cfc5] transition-all hover:bg-white/[.08] hover:text-white"
+          >
+            <Lock size={13} strokeWidth={2.2} />
+            <span>Creator Sign In</span>
+          </button>
+        )}
 
-        <div className="mb-3 px-3 eyebrow">Workspace</div>
+        <div className="mb-3 px-3 eyebrow">Library</div>
         <nav className="space-y-1" aria-label="Primary navigation">
           <button
             type="button"
@@ -157,46 +292,116 @@ function Sidebar({ active, onOpenUpload }: { active: string; onOpenUpload: () =>
             className="nav-item flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#8a928c]"
           >
             <LayoutGrid size={16} strokeWidth={1.8} />
-            <span>Browse library</span>
+            <span>Browse Places</span>
           </button>
         </nav>
       </div>
+
+      {isOwner && (
+        <div className="border-t border-white/[.07] pt-4 px-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="grid h-6 w-6 place-items-center rounded-full bg-amber-500/20 text-[9px] font-bold text-amber-300">
+                <Crown size={11} />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-[10px] font-bold text-[#e1e4dd]">{currentUser}</p>
+                <p className="font-mono-ui text-[8px] text-amber-400/90 uppercase tracking-wider">Creator</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              data-testid="button-sidebar-logout"
+              onClick={onLogout}
+              title="Sign out"
+              className="icon-button rounded-md p-1.5 text-[#737e75] hover:text-rose-400"
+            >
+              <LogOut size={13} />
+            </button>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
 
-function MobileDrawer({ onClose, onOpenUpload }: { onClose: () => void; onOpenUpload: () => void }) {
+function MobileDrawer({
+  onClose,
+  isOwner,
+  onOpenUpload,
+  onOpenAuth,
+  onLogout,
+}: {
+  onClose: () => void;
+  isOwner: boolean;
+  onOpenUpload: () => void;
+  onOpenAuth: () => void;
+  onLogout: () => void;
+}) {
   return (
     <div className="fixed inset-0 z-40 lg:hidden">
-      <button type="button" data-testid="button-close-drawer-backdrop" onClick={onClose} className="absolute inset-0 bg-black/60" aria-label="Close navigation"></button>
-      <aside className="drawer-in sidebar relative flex h-full w-[280px] flex-col border-r border-white/[.08] px-4 py-5">
-        <div className="mb-6 flex items-center justify-between px-3">
-          <div className="flex items-center gap-3">
-            <img src="/vertex-logo.png" alt="Vertex logo" className="h-9 w-9 rounded-xl object-cover" />
-            <div className="font-display text-[19px] font-bold tracking-[-.05em]">Vertex</div>
+      <button type="button" data-testid="button-close-drawer-backdrop" onClick={onClose} className="absolute inset-0 bg-black/60" aria-label="Close navigation" />
+      <aside className="drawer-in sidebar relative flex h-full w-[280px] flex-col justify-between border-r border-white/[.08] px-4 py-5">
+        <div>
+          <div className="mb-6 flex items-center justify-between px-3">
+            <div className="flex items-center gap-3">
+              <img src="/vertex-logo.png" alt="Vertex logo" className="h-9 w-9 rounded-xl object-cover" />
+              <div className="font-display text-[19px] font-bold tracking-[-.05em]">Vertex</div>
+            </div>
+            <button type="button" data-testid="button-close-drawer" onClick={onClose} className="icon-button rounded-md p-2 text-[#818982]" aria-label="Close menu">
+              <X size={18} />
+            </button>
           </div>
-          <button type="button" data-testid="button-close-drawer" onClick={onClose} className="icon-button rounded-md p-2 text-[#818982]" aria-label="Close menu">
-            <X size={18} />
+
+          {isOwner ? (
+            <button
+              type="button"
+              data-testid="button-mobile-drawer-upload"
+              onClick={() => {
+                onClose();
+                onOpenUpload();
+              }}
+              className="mb-5 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-[12px] font-extrabold text-[#11151c]"
+            >
+              <Upload size={15} strokeWidth={2.4} />
+              <span>Upload .RBXL</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="button-mobile-drawer-auth"
+              onClick={() => {
+                onClose();
+                onOpenAuth();
+              }}
+              className="mb-5 flex w-full items-center justify-center gap-2 rounded-xl border border-white/[.12] bg-[#171c26] px-3.5 py-2.5 text-[11px] font-bold text-[#c7cfc5]"
+            >
+              <Lock size={13} strokeWidth={2.2} />
+              <span>Creator Sign In</span>
+            </button>
+          )}
+
+          <div className="mb-3 px-3 eyebrow">Library</div>
+          <button type="button" data-testid="mobile-nav-browse" onClick={onClose} className="nav-item flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#cfd6cb]">
+            <LayoutGrid size={16} /> Browse Places
           </button>
         </div>
 
-        <button
-          type="button"
-          data-testid="button-mobile-drawer-upload"
-          onClick={() => {
-            onClose();
-            onOpenUpload();
-          }}
-          className="mb-5 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-[12px] font-extrabold text-[#11151c]"
-        >
-          <Upload size={15} strokeWidth={2.4} />
-          <span>Upload file</span>
-        </button>
-
-        <div className="mb-3 px-3 eyebrow">Workspace</div>
-        <button type="button" data-testid="mobile-nav-browse" onClick={onClose} className="nav-item flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#cfd6cb]">
-          <LayoutGrid size={16} /> Browse library
-        </button>
+        {isOwner && (
+          <div className="border-t border-white/[.08] pt-4 px-2 flex items-center justify-between">
+            <span className="text-[10px] text-[#8e9890] truncate font-mono">{OWNER_EMAIL}</span>
+            <button
+              type="button"
+              onClick={() => {
+                onLogout();
+                onClose();
+              }}
+              className="text-[10px] text-rose-400 font-bold hover:underline"
+            >
+              Sign out
+            </button>
+          </div>
+        )}
       </aside>
     </div>
   );
@@ -207,8 +412,8 @@ function Preview({ file }: { file: FileRecord }) {
     <div className={`preview-art ${file.art} relative h-[150px] shrink-0 rounded-t-[11px]`}>
       <div className="absolute inset-0 flex flex-col justify-between p-4">
         <div className="flex items-center justify-between">
-          <span className="rounded bg-black/35 px-2 py-1 font-mono-ui text-[8px] tracking-[.14em] text-white/90 backdrop-blur-sm">
-            {file.category.toUpperCase()}
+          <span className="rounded bg-black/40 px-2 py-1 font-mono-ui text-[8px] tracking-[.14em] text-white/90 backdrop-blur-sm">
+            {file.category.toUpperCase()} · RBXL
           </span>
           <ArrowUpRight size={14} className="text-white/60" />
         </div>
@@ -223,6 +428,7 @@ function Preview({ file }: { file: FileRecord }) {
 function FileCard({
   file,
   favorite,
+  isOwner,
   onFavorite,
   onDownload,
   onDelete,
@@ -230,13 +436,12 @@ function FileCard({
 }: {
   file: FileRecord;
   favorite: boolean;
+  isOwner: boolean;
   onFavorite: () => void;
   onDownload: () => void;
   onDelete?: () => void;
   index: number;
 }) {
-  const isCustom = file.id.startsWith('custom-');
-
   return (
     <article data-testid={`card-file-${file.id}`} className="file-card surface overflow-hidden rounded-xl" style={{ animationDelay: `${index * 65}ms` }}>
       <Preview file={file} />
@@ -251,14 +456,14 @@ function FileCard({
             </p>
           </div>
           <div className="flex items-center gap-1">
-            {isCustom && onDelete && (
+            {isOwner && onDelete && (
               <button
                 type="button"
                 data-testid={`button-delete-${file.id}`}
                 onClick={onDelete}
                 aria-label={`Delete ${file.title}`}
                 className="icon-button shrink-0 rounded-md p-1.5 text-[#657069] hover:text-[#f87171]"
-                title="Remove file"
+                title="Remove place"
               >
                 <Trash2 size={14} />
               </button>
@@ -313,7 +518,7 @@ function FileCard({
             onClick={onDownload}
             className="download-button flex items-center gap-1.5 rounded-md bg-white px-2.5 py-1.5 text-[10px] font-extrabold text-[#171a1f]"
           >
-            <Download size={12} /> Get file
+            <Download size={12} /> Download .rbxl
           </button>
         </div>
       </div>
@@ -323,54 +528,105 @@ function FileCard({
 
 function UploadModal({
   isOpen,
+  isOwner,
   onClose,
+  onOpenAuth,
   onUpload,
 }: {
   isOpen: boolean;
+  isOwner: boolean;
   onClose: () => void;
+  onOpenAuth: () => void;
   onUpload: (newFile: FileRecord, fileBlob?: File) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
-  const [category, setCategory] = useState<Category>('Design');
-  const [author, setAuthor] = useState('You');
+  const [category, setCategory] = useState<Category>('Places');
   const [description, setDescription] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [art, setArt] = useState<string>('art-cobalt');
   const [artLabel, setArtLabel] = useState('');
+  const [fileError, setFileError] = useState('');
   const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setSelectedFile(null);
       setTitle('');
-      setCategory('Design');
-      setAuthor('You');
+      setCategory('Places');
       setDescription('');
       setTagsInput('');
       setArt('art-cobalt');
       setArtLabel('');
+      setFileError('');
       setIsDragging(false);
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
+  if (!isOwner) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute inset-0 bg-black/75 backdrop-blur-sm"
+          aria-label="Close modal"
+        />
+        <div className="toast-in surface relative w-full max-w-[420px] rounded-2xl border border-white/[.12] p-6 text-center shadow-2xl">
+          <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-amber-500/10 text-amber-400">
+            <Lock size={24} />
+          </div>
+          <h2 className="font-display text-[17px] font-bold text-[#f1f2e9]">Restricted Access</h2>
+          <p className="mt-2 text-[11px] leading-relaxed text-[#8f9890]">
+            Only <strong className="text-white">{OWNER_EMAIL}</strong> is authorized to upload Roblox place files (.rbxl/.rbxlx) to this archive.
+          </p>
+          <div className="mt-5 flex justify-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-white/[.1] px-4 py-2 text-[11px] font-semibold text-[#8e978f] hover:bg-white/[.05]"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenAuth();
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-[11px] font-extrabold text-[#171a1f]"
+            >
+              <User size={13} />
+              <span>Sign in as pukiler23</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const handleFile = (file: File) => {
+    if (!isRobloxFile(file.name)) {
+      setFileError('Invalid file format. Only Roblox Place files (.rbxl and .rbxlx) are accepted.');
+      setSelectedFile(null);
+      return;
+    }
+
+    setFileError('');
     setSelectedFile(file);
     const baseName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
     if (!title) {
       setTitle(baseName.charAt(0).toUpperCase() + baseName.slice(1));
     }
-    const cat = inferCategory(file.name);
-    setCategory(cat);
     if (!artLabel) {
       const words = baseName.toUpperCase().split(/\s+/).slice(0, 2);
-      setArtLabel(words.join('\n') || 'CUSTOM\nFILE');
+      setArtLabel(words.join('\n') || 'ROBLOX\nPLACE');
     }
     if (!description) {
-      setDescription(`Uploaded ${file.name} (${formatBytes(file.size)}) to personal archive.`);
+      setDescription(`Roblox place file (${file.name}, ${formatBytes(file.size)}) uploaded by ${OWNER_EMAIL}.`);
     }
   };
 
@@ -384,6 +640,10 @@ function UploadModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedFile) {
+      setFileError('Please select a .rbxl or .rbxlx file to upload.');
+      return;
+    }
     if (!title.trim()) return;
 
     const tags = tagsInput
@@ -391,25 +651,29 @@ function UploadModal({
       .map((t) => t.trim().toLowerCase().replace(/^#/, ''))
       .filter(Boolean);
 
+    const ext = selectedFile.name.split('.').pop()?.toLowerCase() || 'rbxl';
+    const finalTags = Array.from(new Set(['roblox', ext, ...tags]));
+
     const newRecord: FileRecord = {
-      id: `custom-${Date.now()}`,
+      id: `rbxl-${Date.now()}`,
       title: title.trim(),
       category,
-      author: author.trim() || 'You',
-      initials: getInitials(author || 'You'),
-      size: selectedFile ? formatBytes(selectedFile.size) : '1.2 MB',
+      author: 'pukiler23',
+      initials: 'PU',
+      size: formatBytes(selectedFile.size),
       downloads: '0',
       rating: 5.0,
       reviews: 1,
-      tags: tags.length > 0 ? tags : ['custom', category.toLowerCase()],
-      description: description.trim() || 'Added to personal library collection.',
+      tags: finalTags,
+      description: description.trim() || `Roblox place file ready to open in Roblox Studio.`,
       art,
       artLabel: artLabel.trim() || title.trim().toUpperCase().slice(0, 10),
       updated: 'Just now',
       verified: true,
+      fileName: selectedFile.name,
     };
 
-    onUpload(newRecord, selectedFile || undefined);
+    onUpload(newRecord, selectedFile);
     onClose();
   };
 
@@ -433,9 +697,9 @@ function UploadModal({
               <FileUp size={19} />
             </div>
             <div>
-              <h2 className="font-display text-[17px] font-bold text-[#f1f2e9]">Upload to Vertex</h2>
+              <h2 className="font-display text-[17px] font-bold text-[#f1f2e9]">Upload Roblox Place</h2>
               <p className="font-mono-ui text-[9px] uppercase tracking-[.14em] text-[#788279]">
-                Personal Archive Upload
+                Only .RBXL & .RBXLX Supported · {OWNER_EMAIL}
               </p>
             </div>
           </div>
@@ -454,11 +718,12 @@ function UploadModal({
           {/* Dropzone */}
           <div>
             <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
-              File (Drag & drop or select)
+              Roblox Place File (.RBXL / .RBXLX) *
             </label>
             <input
               ref={fileInputRef}
               type="file"
+              accept=".rbxl,.rbxlx"
               onChange={(e) => {
                 if (e.target.files && e.target.files[0]) {
                   handleFile(e.target.files[0]);
@@ -479,36 +744,45 @@ function UploadModal({
                   ? 'border-white bg-white/[.08]'
                   : selectedFile
                   ? 'border-emerald-500/50 bg-emerald-950/10'
+                  : fileError
+                  ? 'border-rose-500/50 bg-rose-950/10'
                   : 'border-white/[.15] bg-[#12161f] hover:border-white/40 hover:bg-white/[.03]'
               }`}
             >
               {selectedFile ? (
                 <div className="flex items-center gap-3">
-                  <Check size={16} className="text-emerald-400" />
+                  <Check size={18} className="text-emerald-400" />
                   <div className="text-left">
                     <p className="text-[12px] font-bold text-[#f0f2eb]">{selectedFile.name}</p>
-                    <p className="font-mono-ui text-[9px] text-[#808b82]">{formatBytes(selectedFile.size)} · Click to replace</p>
+                    <p className="font-mono-ui text-[9px] text-[#808b82]">
+                      {formatBytes(selectedFile.size)} · Valid Roblox Place · Click to replace
+                    </p>
                   </div>
                 </div>
               ) : (
                 <>
-                  <Upload size={22} className="mb-2 text-[#8e9890]" />
+                  <Box size={24} className="mb-2 text-[#8e9890]" />
                   <p className="text-[11px] font-semibold text-[#e1e4dc]">
-                    Drop file here, or <span className="underline underline-offset-2">browse</span>
+                    Drop <span className="text-amber-300">.rbxl</span> or <span className="text-amber-300">.rbxlx</span> file here, or <span className="underline underline-offset-2">browse</span>
                   </p>
                   <p className="mt-1 font-mono-ui text-[9px] text-[#6b766e]">
-                    Any format (ZIP, FIG, PDF, MP4, MP3, CODE, etc.)
+                    Roblox Studio Place Binary & XML files only
                   </p>
                 </>
               )}
             </div>
+            {fileError && (
+              <p className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-rose-400">
+                <AlertCircle size={12} /> {fileError}
+              </p>
+            )}
           </div>
 
           {/* Title & Category */}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
-                Title *
+                Place Title *
               </label>
               <input
                 type="text"
@@ -516,7 +790,7 @@ function UploadModal({
                 data-testid="input-upload-title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Design Tokens v2"
+                placeholder="e.g. Battlegrounds Arena Map"
                 className="w-full rounded-lg border border-white/[.1] bg-[#12161f] px-3 py-2 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
               />
             </div>
@@ -539,31 +813,31 @@ function UploadModal({
             </div>
           </div>
 
-          {/* Author & Banner Label */}
+          {/* Cover Label & Tags */}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
-                Author Name
-              </label>
-              <input
-                type="text"
-                data-testid="input-upload-author"
-                value={author}
-                onChange={(e) => setAuthor(e.target.value)}
-                placeholder="e.g. You"
-                className="w-full rounded-lg border border-white/[.1] bg-[#12161f] px-3 py-2 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
-                Cover Label (1-2 words)
+                Cover Art Text (1-2 words)
               </label>
               <input
                 type="text"
                 data-testid="input-upload-label"
                 value={artLabel}
                 onChange={(e) => setArtLabel(e.target.value)}
-                placeholder="e.g. UI\nKIT"
+                placeholder="e.g. ARENA\nMAP"
+                className="w-full rounded-lg border border-white/[.1] bg-[#12161f] px-3 py-2 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
+                Tags (comma-separated)
+              </label>
+              <input
+                type="text"
+                data-testid="input-upload-tags"
+                value={tagsInput}
+                onChange={(e) => setTagsInput(e.target.value)}
+                placeholder="e.g. pvp, sci-fi, lighting, lobby"
                 className="w-full rounded-lg border border-white/[.1] bg-[#12161f] px-3 py-2 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
               />
             </div>
@@ -579,23 +853,8 @@ function UploadModal({
               data-testid="textarea-upload-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Short summary of what this file contains..."
+              placeholder="Describe this Roblox place, mechanics, or features..."
               className="w-full resize-none rounded-lg border border-white/[.1] bg-[#12161f] px-3 py-2 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
-            />
-          </div>
-
-          {/* Tags */}
-          <div>
-            <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
-              Tags (comma-separated)
-            </label>
-            <input
-              type="text"
-              data-testid="input-upload-tags"
-              value={tagsInput}
-              onChange={(e) => setTagsInput(e.target.value)}
-              placeholder="e.g. figma, ui, tokens, dark"
-              className="w-full rounded-lg border border-white/[.1] bg-[#12161f] px-3 py-2 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
             />
           </div>
 
@@ -632,18 +891,18 @@ function UploadModal({
             <div className="overflow-hidden rounded-xl border border-white/[.08] bg-[#141822]">
               <div className={`preview-art ${art} relative h-[80px] p-3`}>
                 <span className="rounded bg-black/40 px-1.5 py-0.5 font-mono-ui text-[7px] tracking-[.14em] text-white/90">
-                  {category.toUpperCase()}
+                  {category.toUpperCase()} · RBXL
                 </span>
                 <div className="mt-1 font-display text-[16px] font-bold text-white/90">
-                  {artLabel || title.toUpperCase() || 'FILE PREVIEW'}
+                  {artLabel || title.toUpperCase() || 'ROBLOX PLACE'}
                 </div>
               </div>
               <div className="p-3">
                 <div className="text-[11px] font-bold text-[#e8ebe2]">
-                  {title || 'Untitled File'}
+                  {title || 'Untitled Place'}
                 </div>
                 <div className="mt-0.5 text-[9px] text-[#808b82]">
-                  By {author || 'You'} · {selectedFile ? formatBytes(selectedFile.size) : '1.2 MB'}
+                  By pukiler23 · {selectedFile ? formatBytes(selectedFile.size) : '0 Bytes'}
                 </div>
               </div>
             </div>
@@ -661,12 +920,12 @@ function UploadModal({
             </button>
             <button
               type="submit"
-              disabled={!title.trim()}
+              disabled={!selectedFile || !title.trim()}
               data-testid="button-submit-upload"
               className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-[11px] font-extrabold text-[#171a1f] shadow-md transition-all hover:bg-[#e4e7dd] disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Upload size={13} strokeWidth={2.4} />
-              <span>Publish file</span>
+              <span>Publish .RBXL place</span>
             </button>
           </div>
         </form>
@@ -692,11 +951,19 @@ function Feedback({ message, onClose }: { message: string; onClose: () => void }
 }
 
 function BrowsePage() {
+  const [currentUser, setCurrentUser] = useState<string | null>(() => {
+    return localStorage.getItem('vertex_auth_user') || null;
+  });
+
+  const isOwner = currentUser?.toLowerCase() === OWNER_EMAIL.toLowerCase();
+
   const [fileList, setFileList] = useState<FileRecord[]>(() => {
     try {
       const saved = localStorage.getItem('vertex_archive_files');
       if (saved) {
-        return JSON.parse(saved);
+        const parsed: FileRecord[] = JSON.parse(saved);
+        // keep only custom uploaded files, remove all preinstalled mock files
+        return parsed.filter((f) => f.id.startsWith('custom-') || f.id.startsWith('rbxl-'));
       }
     } catch {
       // ignore
@@ -706,11 +973,12 @@ function BrowsePage() {
 
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<'Newest' | 'Most downloaded' | 'Top rated'>('Newest');
-  const [favorites, setFavorites] = useState<string[]>(['mono-objects']);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
-  const [cookieVisible, setCookieVisible] = useState(true);
+  const [cookieVisible, setCookieVisible] = useState(false);
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [sortOpen, setSortOpen] = useState(false);
 
@@ -723,13 +991,25 @@ function BrowsePage() {
     }
   };
 
+  const handleLogin = (email: string) => {
+    setCurrentUser(email);
+    localStorage.setItem('vertex_auth_user', email);
+    showFeedback(`Signed in as ${email}. You can now upload .rbxl place files.`);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('vertex_auth_user');
+    showFeedback('Signed out of creator mode.');
+  };
+
   const handleUploadNewFile = (newRecord: FileRecord, fileBlob?: File) => {
     if (fileBlob) {
       uploadedBlobs.set(newRecord.id, { blob: fileBlob, fileName: fileBlob.name });
     }
     const updated = [newRecord, ...fileList];
     saveFiles(updated);
-    showFeedback(`"${newRecord.title}" published to your library.`);
+    showFeedback(`"${newRecord.title}" (.rbxl) published to archive.`);
   };
 
   const handleDeleteFile = (id: string) => {
@@ -737,7 +1017,7 @@ function BrowsePage() {
     const updated = fileList.filter((f) => f.id !== id);
     saveFiles(updated);
     uploadedBlobs.delete(id);
-    showFeedback(`"${target?.title || 'File'}" removed from library.`);
+    showFeedback(`"${target?.title || 'Place'}" removed from library.`);
   };
 
   const visibleFiles = useMemo(() => {
@@ -759,13 +1039,28 @@ function BrowsePage() {
 
   const handleDownload = (file: FileRecord) => {
     downloadFile(file);
-    showFeedback(`${file.title} is ready in your downloads`);
+    showFeedback(`${file.title} is downloading`);
   };
 
   return (
     <div className="app-shell flex text-[#e7e9e0]">
-      <Sidebar active="Browse library" onOpenUpload={() => setUploadModalOpen(true)} />
-      {drawerOpen && <MobileDrawer onClose={() => setDrawerOpen(false)} onOpenUpload={() => setUploadModalOpen(true)} />}
+      <Sidebar
+        active="Browse library"
+        isOwner={isOwner}
+        currentUser={currentUser}
+        onOpenUpload={() => setUploadModalOpen(true)}
+        onOpenAuth={() => setAuthModalOpen(true)}
+        onLogout={handleLogout}
+      />
+      {drawerOpen && (
+        <MobileDrawer
+          onClose={() => setDrawerOpen(false)}
+          isOwner={isOwner}
+          onOpenUpload={() => setUploadModalOpen(true)}
+          onOpenAuth={() => setAuthModalOpen(true)}
+          onLogout={handleLogout}
+        />
+      )}
 
       <main className="min-w-0 flex-1">
         <header className="topbar sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-white/[.07] px-4 sm:px-7 lg:px-10">
@@ -779,26 +1074,38 @@ function BrowsePage() {
             <Menu size={21} />
           </button>
           <div className="hidden items-center gap-2 lg:flex">
-            <span className="eyebrow">Library /</span>
-            <span className="text-[11px] font-semibold text-[#d0d6cc]">Browse</span>
+            <span className="eyebrow">Roblox /</span>
+            <span className="text-[11px] font-semibold text-[#d0d6cc]">Place Archive</span>
           </div>
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
-            <button
-              type="button"
-              data-testid="button-header-upload"
-              onClick={() => setUploadModalOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[11px] font-extrabold text-[#171a1f] shadow-sm transition-all hover:bg-[#e4e7dd] active:scale-95"
-            >
-              <Upload size={13} strokeWidth={2.4} />
-              <span>Upload file</span>
-            </button>
+            {isOwner ? (
+              <button
+                type="button"
+                data-testid="button-header-upload"
+                onClick={() => setUploadModalOpen(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[11px] font-extrabold text-[#171a1f] shadow-sm transition-all hover:bg-[#e4e7dd] active:scale-95"
+              >
+                <Upload size={13} strokeWidth={2.4} />
+                <span>Upload .rbxl</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid="button-header-auth"
+                onClick={() => setAuthModalOpen(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-white/[.12] bg-[#161b24] px-3 py-1.5 text-[11px] font-bold text-[#c7cfc5] transition-all hover:bg-white/[.08] hover:text-white"
+              >
+                <Lock size={12} />
+                <span>Creator Sign In</span>
+              </button>
+            )}
             <button
               type="button"
               data-testid="button-header-help"
-              onClick={() => showFeedback('Vertex is moderated by people, not feeds')}
+              onClick={() => showFeedback('Vertex Roblox Archive — Exclusively curated .rbxl and .rbxlx place files')}
               className="icon-button hidden items-center gap-2 rounded-lg px-2 py-2 text-[11px] font-semibold text-[#7c867d] sm:flex"
             >
-              <HelpCircle size={15} /> How it works
+              <HelpCircle size={15} /> Info
             </button>
           </div>
         </header>
@@ -808,14 +1115,14 @@ function BrowsePage() {
             <div>
               <div className="mb-3 flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_0_4px_rgba(255,255,255,.1)]"></span>
-                <span className="eyebrow text-[#c4c8c4]">A better file drawer</span>
+                <span className="eyebrow text-[#c4c8c4]">Roblox Place Archive</span>
               </div>
               <h1 className="max-w-[650px] font-display text-[clamp(34px,5vw,61px)] font-bold leading-[.96] tracking-[-.075em] text-[#f0f1e9]">
-                Useful things,<br />
-                <span className="text-[#c7cbc7]">kept within reach.</span>
+                Roblox places,<br />
+                <span className="text-[#c7cbc7]">ready for Studio.</span>
               </h1>
               <p className="mt-4 max-w-[490px] text-[12px] leading-[1.7] text-[#7f8981]">
-                Vertex is a focused archive of files worth keeping. Find the signal, skip the noise, and leave the next person a better starting point.
+                Curated archive for Roblox place files (.rbxl & .rbxlx). Browse places, download to edit in Roblox Studio, or upload new creations.
               </p>
             </div>
           </section>
@@ -828,7 +1135,7 @@ function BrowsePage() {
                 data-testid="input-search-files"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by title, author, or tags..."
+                placeholder="Search places by name, creator, or tags..."
                 className="min-w-0 flex-1 bg-transparent text-[12px] text-[#eef0e9] outline-none placeholder:text-[#5e6861]"
               />
               <kbd className="hidden rounded border border-white/[.1] bg-white/[.04] px-2 py-1 font-mono-ui text-[9px] text-[#667269] sm:block">
@@ -839,9 +1146,9 @@ function BrowsePage() {
 
           <section className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-display text-[18px] font-bold tracking-[-.045em] text-[#e6e9df]">All files</h2>
+              <h2 className="font-display text-[18px] font-bold tracking-[-.045em] text-[#e6e9df]">All Places</h2>
               <p data-testid="text-results-count" className="mt-1 font-mono-ui text-[9px] uppercase tracking-[.12em] text-[#69746c]">
-                {visibleFiles.length} results · reviewed archive
+                {visibleFiles.length} places · verified .rbxl/.rbxlx
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -905,6 +1212,7 @@ function BrowsePage() {
                   key={file.id}
                   file={file}
                   index={index}
+                  isOwner={isOwner}
                   favorite={favorites.includes(file.id)}
                   onFavorite={() =>
                     setFavorites((current) =>
@@ -917,20 +1225,37 @@ function BrowsePage() {
               ))}
             </div>
           ) : (
-            <div data-testid="empty-search-state" className="surface flex min-h-[260px] flex-col items-center justify-center rounded-2xl px-6 text-center">
-              <Search size={24} className="mb-4 text-[#c7cbc7]" />
-              <h3 className="font-display text-lg font-bold">Nothing in this corner yet</h3>
-              <p className="mt-2 max-w-[320px] text-[11px] leading-relaxed text-[#737e75]">
-                Try a different phrase. The archive is large, but pleasantly picky.
+            <div data-testid="empty-search-state" className="surface flex min-h-[300px] flex-col items-center justify-center rounded-2xl px-6 py-10 text-center">
+              <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-white/[.05] text-[#8e9890]">
+                <Box size={30} strokeWidth={1.6} />
+              </div>
+              <h3 className="font-display text-lg font-bold text-[#f1f2e9]">No Roblox places uploaded yet</h3>
+              <p className="mt-2 max-w-[360px] text-[11px] leading-relaxed text-[#737e75]">
+                {isOwner
+                  ? `You are logged in as ${OWNER_EMAIL}. Upload your first .rbxl or .rbxlx place file to publish it to the archive.`
+                  : `Archive is waiting for place uploads from ${OWNER_EMAIL}. Sign in to upload .rbxl files.`}
               </p>
-              <button
-                type="button"
-                data-testid="button-clear-search"
-                onClick={() => setQuery('')}
-                className="mt-5 rounded-lg bg-white px-4 py-2 text-[10px] font-extrabold text-[#171a1f]"
-              >
-                Clear search
-              </button>
+              {isOwner ? (
+                <button
+                  type="button"
+                  data-testid="button-empty-upload"
+                  onClick={() => setUploadModalOpen(true)}
+                  className="mt-5 flex items-center gap-2 rounded-lg bg-white px-4 py-2.5 text-[11px] font-extrabold text-[#171a1f] shadow-md hover:bg-[#e4e7dd]"
+                >
+                  <Upload size={14} strokeWidth={2.4} />
+                  <span>Upload .RBXL Place</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="button-empty-auth"
+                  onClick={() => setAuthModalOpen(true)}
+                  className="mt-5 flex items-center gap-2 rounded-lg border border-white/[.15] bg-[#161b24] px-4 py-2 text-[11px] font-bold text-[#e1e4dd] hover:bg-white/[.08]"
+                >
+                  <Lock size={13} />
+                  <span>Sign in as {OWNER_EMAIL}</span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -938,48 +1263,17 @@ function BrowsePage() {
 
       <UploadModal
         isOpen={uploadModalOpen}
+        isOwner={isOwner}
         onClose={() => setUploadModalOpen(false)}
+        onOpenAuth={() => setAuthModalOpen(true)}
         onUpload={handleUploadNewFile}
       />
 
-      {cookieVisible && (
-        <div className="cookie-in fixed inset-x-3 bottom-3 z-40 flex flex-col gap-4 rounded-2xl border border-white/[.12] bg-[#171c22]/95 p-4 shadow-2xl backdrop-blur-xl sm:inset-x-auto sm:bottom-5 sm:left-1/2 sm:w-[min(760px,calc(100%-40px))] sm:-translate-x-1/2 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="mt-0.5 hidden rounded-lg bg-white/[.09] p-2 text-white sm:block">
-              <ShieldCheck size={16} />
-            </div>
-            <p data-testid="text-cookie-notice" className="text-[10px] leading-relaxed text-[#9ba39b]">
-              Vertex uses a small cookie to remember your view and keep the archive tidy. No ad profiles.{' '}
-              <button
-                type="button"
-                data-testid="button-cookie-policy"
-                onClick={() => showFeedback('No ad profiles. That is the whole policy.')}
-                className="font-bold text-[#f0f1ed] underline decoration-white/[.3] underline-offset-2"
-              >
-                Read our policy
-              </button>
-            </p>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <button
-              type="button"
-              data-testid="button-cookie-reject"
-              onClick={() => setCookieVisible(false)}
-              className="rounded-lg border border-white/[.1] px-3 py-2 text-[10px] font-bold text-[#89938a]"
-            >
-              Reject
-            </button>
-            <button
-              type="button"
-              data-testid="button-cookie-accept"
-              onClick={() => setCookieVisible(false)}
-              className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[10px] font-extrabold text-[#171a1f]"
-            >
-              <Check size={12} /> Accept
-            </button>
-          </div>
-        </div>
-      )}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onLogin={handleLogin}
+      />
 
       {feedback && <Feedback message={feedback} onClose={() => setFeedback('')} />}
     </div>
