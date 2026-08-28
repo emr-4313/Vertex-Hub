@@ -47,21 +47,21 @@
   --foreground: 48 20% 93%;
   --border: 220 12% 17%;
   --input: 220 12% 21%;
-  --ring: 74 88% 62%;
+  --ring: 0 0% 100%;
   --card: 220 17% 9%;
   --card-foreground: 48 20% 93%;
   --card-border: 220 12% 16%;
   --sidebar: 224 24% 7%;
   --sidebar-foreground: 220 11% 67%;
   --sidebar-border: 220 12% 15%;
-  --sidebar-primary: 74 88% 62%;
+  --sidebar-primary: 0 0% 100%;
   --sidebar-primary-foreground: 220 20% 7%;
   --sidebar-accent: 220 16% 13%;
   --sidebar-accent-foreground: 48 20% 93%;
   --popover: 220 18% 11%;
   --popover-foreground: 48 20% 93%;
   --popover-border: 220 12% 20%;
-  --primary: 74 88% 62%;
+  --primary: 0 0% 100%;
   --primary-foreground: 220 20% 7%;
   --secondary: 220 16% 13%;
   --secondary-foreground: 220 11% 76%;
@@ -107,7 +107,7 @@ body::before {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
 }
 
-.app-shell { min-height: 100dvh; background: radial-gradient(ellipse 70% 35% at 65% -10%, rgba(86, 105, 54, .13), transparent 70%), hsl(var(--background)); }
+.app-shell { min-height: 100dvh; background: radial-gradient(ellipse 70% 35% at 65% -10%, rgba(255, 255, 255, .055), transparent 70%), hsl(var(--background)); }
 .sidebar { background: rgba(12, 15, 23, .82); backdrop-filter: blur(18px); }
 .topbar { background: rgba(13, 16, 24, .78); backdrop-filter: blur(18px); }
 .eyebrow { letter-spacing: .16em; text-transform: uppercase; font-size: 10px; font-family: var(--app-font-mono); color: hsl(var(--muted-foreground)); }
@@ -115,15 +115,15 @@ body::before {
 .surface-subtle { background: rgba(25, 30, 40, .52); border: 1px solid rgba(255,255,255,.06); }
 .nav-item { transition: background-color .18s ease, color .18s ease, transform .18s ease; }
 .nav-item:hover { background: rgba(255,255,255,.055); color: hsl(var(--foreground)); transform: translateX(2px); }
-.nav-item[data-active='true'] { background: rgba(188, 235, 88, .1); color: hsl(var(--primary)); box-shadow: inset 2px 0 hsl(var(--primary)); }
+.nav-item[data-active='true'] { background: rgba(255, 255, 255, .1); color: hsl(var(--primary)); box-shadow: inset 2px 0 hsl(var(--primary)); }
 .file-card { animation: card-in .52s both; transition: transform .22s ease, border-color .22s ease, background-color .22s ease; }
-.file-card:hover { transform: translateY(-4px); border-color: rgba(188,235,88,.3); background: rgba(33,39,49,.78); }
+.file-card:hover { transform: translateY(-4px); border-color: rgba(255,255,255,.28); background: rgba(33,39,49,.78); }
 .file-card:active { transform: translateY(-1px) scale(.995); }
 .preview-art { position: relative; overflow: hidden; }
 .preview-art::after { content: ''; position: absolute; inset: 0; opacity: .28; background-image: linear-gradient(120deg, transparent 18%, rgba(255,255,255,.2) 19%, transparent 20%, transparent 58%, rgba(255,255,255,.12) 59%, transparent 60%); background-size: 22px 22px; mix-blend-mode: overlay; }
 .preview-art::before { content: ''; position: absolute; width: 70%; height: 140%; left: 50%; top: -20%; transform: rotate(22deg); background: linear-gradient(90deg, transparent, rgba(255,255,255,.13), transparent); }
 .chip { transition: color .16s ease, background-color .16s ease, border-color .16s ease, transform .16s ease; }
-.chip:hover { transform: translateY(-1px); border-color: rgba(188,235,88,.5); }
+.chip:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.5); }
 .chip[data-selected='true'] { color: hsl(var(--primary-foreground)); background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
 .icon-button { transition: background-color .16s ease, color .16s ease, transform .16s ease; }
 .icon-button:hover { background: rgba(255,255,255,.08); color: hsl(var(--foreground)); }
@@ -134,7 +134,7 @@ body::before {
 .toast-in { animation: toast-in .28s both; }
 .drawer-in { animation: drawer-in .25s both; }
 .cookie-in { animation: cookie-in .34s both; }
-.search-input:focus-within { border-color: rgba(188,235,88,.6); box-shadow: 0 0 0 3px rgba(188,235,88,.08); }
+.search-input:focus-within { border-color: rgba(255,255,255,.6); box-shadow: 0 0 0 3px rgba(255,255,255,.08); }
 
 @keyframes card-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
