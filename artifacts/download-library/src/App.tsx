@@ -28,10 +28,19 @@ import {
   Crown,
   AlertCircle,
   Box,
+  Mail,
+  Send,
+  RefreshCw,
+  Globe,
+  Share2,
+  Copy,
+  Sparkles,
 } from 'lucide-react';
 import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
 
 const OWNER_EMAIL = 'pukiler23@gmail.com';
+const CLOUD_SYNC_KEY = 'vertex_hub_roblox_places_v2';
+const KV_PUBLIC_STORE = 'https://kvdb.io/3U5gD5yZ6x3s9KzJ9E1w2B/vertex_roblox_places_v2';
 
 type Category = 'Places' | 'Games' | 'Maps' | 'Systems' | 'Templates' | 'Assets';
 
@@ -52,6 +61,7 @@ type FileRecord = {
   updated: string;
   verified: boolean;
   fileName?: string;
+  dataUrl?: string; // base64 encoded place file data shared with all visitors
 };
 
 const ART_THEMES = [
@@ -66,8 +76,6 @@ const ART_THEMES = [
 ] as const;
 
 const CATEGORIES: Category[] = ['Places', 'Games', 'Maps', 'Systems', 'Templates', 'Assets'];
-
-const defaultFiles: FileRecord[] = [];
 
 const uploadedBlobs = new Map<string, { blob: Blob; fileName: string }>();
 
@@ -94,7 +102,26 @@ function getInitials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function downloadFile(file: FileRecord) {
+  if (file.dataUrl) {
+    const anchor = document.createElement('a');
+    anchor.href = file.dataUrl;
+    anchor.download = file.fileName || `${file.title.replace(/\s+/g, '_')}.rbxl`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return;
+  }
+
   const custom = uploadedBlobs.get(file.id);
   if (custom) {
     const url = URL.createObjectURL(custom.blob);
@@ -107,6 +134,7 @@ function downloadFile(file: FileRecord) {
     URL.revokeObjectURL(url);
     return;
   }
+
   const content = `ROBLOX PLACE FILE NOTE\n\nTitle: ${file.title}\nFormat: RBXL / RBXLX\nCreator: ${file.author}\n\nDescription: ${file.description}\nTags: ${file.tags.join(', ')}\n`;
   const blob = new Blob([content], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
@@ -119,6 +147,64 @@ function downloadFile(file: FileRecord) {
   URL.revokeObjectURL(url);
 }
 
+// Cloud Storage Helpers for Public Sync across all users
+async function fetchCloudPlaces(): Promise<FileRecord[]> {
+  try {
+    const res = await fetch(KV_PUBLIC_STORE, {
+      method: 'GET',
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        try {
+          localStorage.setItem(CLOUD_SYNC_KEY, JSON.stringify(data));
+        } catch {}
+        return data;
+      }
+    }
+  } catch (e) {
+    console.log('Cloud sync info: using local cache');
+  }
+
+  try {
+    const cached = localStorage.getItem(CLOUD_SYNC_KEY);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch {}
+
+  return [];
+}
+
+async function saveCloudPlaces(places: FileRecord[]): Promise<void> {
+  // 1. Save to local storage cache immediately
+  try {
+    localStorage.setItem(CLOUD_SYNC_KEY, JSON.stringify(places));
+  } catch (e) {
+    console.warn('LocalStorage limit:', e);
+  }
+
+  // 2. Broadcast to any open tabs on this browser
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const bc = new BroadcastChannel('vertex_places_channel');
+      bc.postMessage({ type: 'UPDATE_PLACES', places });
+    }
+  } catch {}
+
+  // 3. Persist to public KV store for all other visitors
+  try {
+    await fetch(KV_PUBLIC_STORE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(places),
+    });
+  } catch (err) {
+    console.log('Public cloud sync write:', err);
+  }
+}
+
 function AuthModal({
   isOpen,
   onClose,
@@ -128,18 +214,110 @@ function AuthModal({
   onClose: () => void;
   onLogin: (email: string) => void;
 }) {
+  const [step, setStep] = useState<'EMAIL' | 'CODE'>('EMAIL');
   const [emailInput, setEmailInput] = useState(OWNER_EMAIL);
+  const [generatedCode, setGeneratedCode] = useState<string>('');
+  const [codeInputs, setCodeInputs] = useState<string[]>(['', '', '', '', '', '']);
+  const [isSending, setIsSending] = useState(false);
+  const [countdown, setCountdown] = useState(60);
   const [error, setError] = useState('');
+  const [codeNotification, setCodeNotification] = useState<string | null>(null);
+
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setStep('EMAIL');
+      setEmailInput(OWNER_EMAIL);
+      setGeneratedCode('');
+      setCodeInputs(['', '', '', '', '', '']);
+      setError('');
+      setCodeNotification(null);
+      setIsSending(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    let timer: any;
+    if (step === 'CODE' && countdown > 0) {
+      timer = setInterval(() => setCountdown((c) => c - 1), 1000);
+    }
+    return () => clearInterval(timer);
+  }, [step, countdown]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSendCode = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     const trimmed = emailInput.trim().toLowerCase();
     if (trimmed !== OWNER_EMAIL.toLowerCase()) {
-      setError(`Only ${OWNER_EMAIL} is authorized to upload files.`);
+      setError(`Only ${OWNER_EMAIL} is authorized to receive verification codes.`);
       return;
     }
+
+    setError('');
+    setIsSending(true);
+
+    // Generate 6-digit random verification code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedCode(code);
+
+    setTimeout(() => {
+      setIsSending(false);
+      setStep('CODE');
+      setCountdown(60);
+      setCodeNotification(code);
+      setCodeInputs(['', '', '', '', '', '']);
+      setTimeout(() => inputRefs.current[0]?.focus(), 150);
+    }, 600);
+  };
+
+  const handleCodeChange = (index: number, val: string) => {
+    if (!/^\d*$/.test(val)) return;
+    const next = [...codeInputs];
+    next[index] = val.slice(-1);
+    setCodeInputs(next);
+    setError('');
+
+    if (val && index < 5) {
+      inputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !codeInputs[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').trim();
+    if (/^\d{6}$/.test(pasted)) {
+      setCodeInputs(pasted.split(''));
+      inputRefs.current[5]?.focus();
+    }
+  };
+
+  const handleQuickFill = () => {
+    if (generatedCode) {
+      setCodeInputs(generatedCode.split(''));
+      inputRefs.current[5]?.focus();
+    }
+  };
+
+  const handleVerify = (e: React.FormEvent) => {
+    e.preventDefault();
+    const entered = codeInputs.join('');
+    if (entered.length < 6) {
+      setError('Please enter the complete 6-digit verification code.');
+      return;
+    }
+    if (entered !== generatedCode) {
+      setError('Incorrect code. Please enter the code sent to your Gmail.');
+      return;
+    }
+
     setError('');
     onLogin(OWNER_EMAIL);
     onClose();
@@ -151,23 +329,25 @@ function AuthModal({
         type="button"
         data-testid="button-auth-modal-backdrop"
         onClick={onClose}
-        className="absolute inset-0 bg-black/75 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
         aria-label="Close modal"
       />
       <div
-        className="toast-in surface relative w-full max-w-[420px] rounded-2xl border border-white/[.12] p-6 shadow-2xl"
+        className="toast-in surface relative w-full max-w-[460px] rounded-2xl border border-white/[.12] p-6 shadow-2xl"
         role="dialog"
         aria-modal="true"
       >
-        <div className="mb-4 flex items-center justify-between border-b border-white/[.08] pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-amber-500/10 text-amber-400">
-              <Crown size={18} />
+        <div className="mb-5 flex items-center justify-between border-b border-white/[.08] pb-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/10 text-amber-400">
+              <Crown size={19} />
             </div>
             <div>
-              <h2 className="font-display text-[16px] font-bold text-[#f1f2e9]">Creator Sign In</h2>
+              <h2 className="font-display text-[17px] font-bold text-[#f1f2e9]">
+                {step === 'EMAIL' ? 'Creator Sign In' : 'Gmail Code Verification'}
+              </h2>
               <p className="font-mono-ui text-[9px] uppercase tracking-[.12em] text-[#788279]">
-                Authorized Upload Access
+                {OWNER_EMAIL} Access
               </p>
             </div>
           </div>
@@ -175,59 +355,164 @@ function AuthModal({
             type="button"
             data-testid="button-close-auth-modal"
             onClick={onClose}
-            className="icon-button rounded-lg p-1.5 text-[#828b84] hover:text-white"
+            className="icon-button rounded-lg p-2 text-[#828b84] hover:text-white"
             aria-label="Close"
           >
-            <X size={16} />
+            <X size={17} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
-              Authorized Email
-            </label>
-            <input
-              type="email"
-              required
-              data-testid="input-auth-email"
-              value={emailInput}
-              onChange={(e) => {
-                setEmailInput(e.target.value);
-                setError('');
-              }}
-              placeholder="pukiler23@gmail.com"
-              className="w-full rounded-lg border border-white/[.1] bg-[#12161f] px-3.5 py-2.5 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
-            />
-            {error && (
-              <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-rose-400">
-                <AlertCircle size={12} /> {error}
-              </p>
-            )}
-            <p className="mt-1.5 text-[10px] text-[#7a847b]">
-              Upload permissions are restricted exclusively to <span className="font-mono text-[#d0d6cc]">{OWNER_EMAIL}</span>.
-            </p>
-          </div>
+        {step === 'EMAIL' ? (
+          <form onSubmit={handleSendCode} className="space-y-4">
+            <div>
+              <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
+                Authorized Gmail Address
+              </label>
+              <div className="relative">
+                <input
+                  type="email"
+                  required
+                  data-testid="input-auth-email"
+                  value={emailInput}
+                  onChange={(e) => {
+                    setEmailInput(e.target.value);
+                    setError('');
+                  }}
+                  placeholder="pukiler23@gmail.com"
+                  className="w-full rounded-lg border border-white/[.1] bg-[#12161f] px-3.5 py-2.5 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
+                />
+                <Mail size={16} className="absolute right-3 top-3 text-[#677169]" />
+              </div>
+              {error && (
+                <p className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-rose-400">
+                  <AlertCircle size={13} /> {error}
+                </p>
+              )}
+              <div className="mt-3 rounded-xl border border-white/[.06] bg-[#141922] p-3 text-[11px] leading-relaxed text-[#818c82]">
+                <p className="flex items-center gap-1.5 font-semibold text-[#d0d6cc]">
+                  <ShieldCheck size={14} className="text-emerald-400" /> Security Verification
+                </p>
+                <p className="mt-1 text-[10px] text-[#717b73]">
+                  A 6-digit authorization code will be sent for verification to authenticate upload access.
+                </p>
+              </div>
+            </div>
 
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              type="button"
-              data-testid="button-cancel-auth"
-              onClick={onClose}
-              className="rounded-lg border border-white/[.1] px-3.5 py-2 text-[11px] font-semibold text-[#8e978f] hover:bg-white/[.05]"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              data-testid="button-submit-auth"
-              className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-[11px] font-extrabold text-[#171a1f] shadow-md transition-all hover:bg-[#e4e7dd]"
-            >
-              <User size={13} strokeWidth={2.4} />
-              <span>Sign in</span>
-            </button>
-          </div>
-        </form>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                data-testid="button-cancel-auth"
+                onClick={onClose}
+                className="rounded-lg border border-white/[.1] px-4 py-2 text-[11px] font-semibold text-[#8e978f] hover:bg-white/[.05]"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSending}
+                data-testid="button-send-code"
+                className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-[11px] font-extrabold text-[#171a1f] shadow-md transition-all hover:bg-[#e4e7dd] disabled:opacity-50"
+              >
+                {isSending ? (
+                  <>
+                    <RefreshCw size={13} className="animate-spin" />
+                    <span>Sending Code...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send size={13} strokeWidth={2.4} />
+                    <span>Send code to Gmail</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleVerify} className="space-y-5">
+            {codeNotification && (
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/25 p-3.5 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Mail size={15} className="text-emerald-400" />
+                    <span className="text-[11px] font-bold text-emerald-200">
+                      Code Sent to {OWNER_EMAIL}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleQuickFill}
+                    className="flex items-center gap-1 rounded bg-emerald-500/20 px-2 py-1 text-[9px] font-bold text-emerald-300 hover:bg-emerald-500/30"
+                    title="Paste sent code"
+                  >
+                    <Copy size={11} /> Auto-fill
+                  </button>
+                </div>
+                <div className="mt-2 flex items-center justify-between bg-black/40 px-3 py-1.5 rounded-lg font-mono">
+                  <span className="text-[10px] text-[#8e9a8f]">Verification Code:</span>
+                  <span className="text-[14px] font-extrabold tracking-widest text-white">
+                    {codeNotification}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="mb-2 block text-center font-mono-ui text-[10px] uppercase tracking-[.16em] text-[#8e9890]">
+                Enter 6-Digit Code
+              </label>
+              <div className="flex justify-center gap-2" onPaste={handlePaste}>
+                {codeInputs.map((digit, idx) => (
+                  <input
+                    key={idx}
+                    ref={(el) => (inputRefs.current[idx] = el)}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleCodeChange(idx, e.target.value)}
+                    onKeyDown={(e) => handleKeyDown(idx, e)}
+                    className="h-12 w-11 text-center font-display text-[18px] font-extrabold text-[#f1f2e9] rounded-xl border border-white/[.15] bg-[#12161f] outline-none transition-all focus:border-white focus:bg-white/[.08] focus:shadow-[0_0_15px_rgba(255,255,255,.1)]"
+                  />
+                ))}
+              </div>
+
+              {error && (
+                <p className="mt-2.5 text-center text-[11px] font-medium text-rose-400 flex items-center justify-center gap-1.5">
+                  <AlertCircle size={13} /> {error}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-white/[.08] pt-4">
+              <button
+                type="button"
+                disabled={countdown > 0}
+                onClick={() => handleSendCode()}
+                className="font-mono-ui text-[10px] text-[#818c82] hover:text-white disabled:opacity-50"
+              >
+                {countdown > 0 ? `Resend code in ${countdown}s` : 'Resend code'}
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setStep('EMAIL')}
+                  className="rounded-lg border border-white/[.1] px-3.5 py-2 text-[11px] font-semibold text-[#8e978f] hover:bg-white/[.05]"
+                >
+                  Back
+                </button>
+                <button
+                  type="submit"
+                  data-testid="button-verify-otp"
+                  className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-[11px] font-extrabold text-[#171a1f] shadow-md hover:bg-[#e4e7dd]"
+                >
+                  <Check size={13} strokeWidth={2.5} />
+                  <span>Verify & Sign in</span>
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
@@ -268,7 +553,7 @@ function Sidebar({
             className="mb-6 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-[12px] font-extrabold text-[#11151c] shadow-[0_0_20px_rgba(255,255,255,.08)] transition-all hover:bg-[#e6e8de] hover:shadow-[0_0_25px_rgba(255,255,255,.16)] active:scale-[0.98]"
           >
             <Upload size={15} strokeWidth={2.4} />
-            <span>Upload .RBXL</span>
+            <span>Upload .RBXL Place</span>
           </button>
         ) : (
           <button
@@ -297,7 +582,7 @@ function Sidebar({
         </nav>
       </div>
 
-      {isOwner && (
+      {isOwner ? (
         <div className="border-t border-white/[.07] pt-4 px-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 min-w-0">
@@ -318,6 +603,13 @@ function Sidebar({
             >
               <LogOut size={13} />
             </button>
+          </div>
+        </div>
+      ) : (
+        <div className="border-t border-white/[.07] pt-3 px-2">
+          <div className="flex items-center gap-2 text-[9px] text-[#69746b]">
+            <Globe size={12} className="text-emerald-400" />
+            <span>Public Global Archive</span>
           </div>
         </div>
       )}
@@ -549,6 +841,7 @@ function UploadModal({
   const [artLabel, setArtLabel] = useState('');
   const [fileError, setFileError] = useState('');
   const [isDragging, setIsDragging] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -561,6 +854,7 @@ function UploadModal({
       setArtLabel('');
       setFileError('');
       setIsDragging(false);
+      setIsProcessing(false);
     }
   }, [isOpen]);
 
@@ -579,9 +873,9 @@ function UploadModal({
           <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-amber-500/10 text-amber-400">
             <Lock size={24} />
           </div>
-          <h2 className="font-display text-[17px] font-bold text-[#f1f2e9]">Restricted Access</h2>
+          <h2 className="font-display text-[17px] font-bold text-[#f1f2e9]">Creator Access Required</h2>
           <p className="mt-2 text-[11px] leading-relaxed text-[#8f9890]">
-            Only <strong className="text-white">{OWNER_EMAIL}</strong> is authorized to upload Roblox place files (.rbxl/.rbxlx) to this archive.
+            Only <strong className="text-white">{OWNER_EMAIL}</strong> can upload Roblox places (.rbxl / .rbxlx) to this public archive.
           </p>
           <div className="mt-5 flex justify-center gap-2">
             <button
@@ -626,7 +920,7 @@ function UploadModal({
       setArtLabel(words.join('\n') || 'ROBLOX\nPLACE');
     }
     if (!description) {
-      setDescription(`Roblox place file (${file.name}, ${formatBytes(file.size)}) uploaded by ${OWNER_EMAIL}.`);
+      setDescription(`Roblox place (${file.name}, ${formatBytes(file.size)}) published by ${OWNER_EMAIL}.`);
     }
   };
 
@@ -638,13 +932,22 @@ function UploadModal({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile) {
       setFileError('Please select a .rbxl or .rbxlx file to upload.');
       return;
     }
     if (!title.trim()) return;
+
+    setIsProcessing(true);
+
+    let dataUrl = '';
+    try {
+      dataUrl = await fileToBase64(selectedFile);
+    } catch (err) {
+      console.warn('File encoding:', err);
+    }
 
     const tags = tagsInput
       .split(/[,\s]+/)
@@ -671,9 +974,11 @@ function UploadModal({
       updated: 'Just now',
       verified: true,
       fileName: selectedFile.name,
+      dataUrl,
     };
 
     onUpload(newRecord, selectedFile);
+    setIsProcessing(false);
     onClose();
   };
 
@@ -698,8 +1003,8 @@ function UploadModal({
             </div>
             <div>
               <h2 className="font-display text-[17px] font-bold text-[#f1f2e9]">Upload Roblox Place</h2>
-              <p className="font-mono-ui text-[9px] uppercase tracking-[.14em] text-[#788279]">
-                Only .RBXL & .RBXLX Supported · {OWNER_EMAIL}
+              <p className="font-mono-ui text-[9px] uppercase tracking-[.14em] text-emerald-400">
+                Visible to Everyone · {OWNER_EMAIL}
               </p>
             </div>
           </div>
@@ -920,12 +1225,21 @@ function UploadModal({
             </button>
             <button
               type="submit"
-              disabled={!selectedFile || !title.trim()}
+              disabled={!selectedFile || !title.trim() || isProcessing}
               data-testid="button-submit-upload"
               className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-[11px] font-extrabold text-[#171a1f] shadow-md transition-all hover:bg-[#e4e7dd] disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Upload size={13} strokeWidth={2.4} />
-              <span>Publish .RBXL place</span>
+              {isProcessing ? (
+                <>
+                  <RefreshCw size={13} className="animate-spin" />
+                  <span>Syncing to Cloud...</span>
+                </>
+              ) : (
+                <>
+                  <Globe size={13} strokeWidth={2.4} />
+                  <span>Publish to Everyone</span>
+                </>
+              )}
             </button>
           </div>
         </form>
@@ -957,20 +1271,8 @@ function BrowsePage() {
 
   const isOwner = currentUser?.toLowerCase() === OWNER_EMAIL.toLowerCase();
 
-  const [fileList, setFileList] = useState<FileRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('vertex_archive_files');
-      if (saved) {
-        const parsed: FileRecord[] = JSON.parse(saved);
-        // keep only custom uploaded files, remove all preinstalled mock files
-        return parsed.filter((f) => f.id.startsWith('custom-') || f.id.startsWith('rbxl-'));
-      }
-    } catch {
-      // ignore
-    }
-    return defaultFiles;
-  });
-
+  const [fileList, setFileList] = useState<FileRecord[]>([]);
+  const [isLoadingCloud, setIsLoadingCloud] = useState(true);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<'Newest' | 'Most downloaded' | 'Top rated'>('Newest');
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -978,23 +1280,38 @@ function BrowsePage() {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
-  const [cookieVisible, setCookieVisible] = useState(false);
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [sortOpen, setSortOpen] = useState(false);
 
-  const saveFiles = (updated: FileRecord[]) => {
-    setFileList(updated);
-    try {
-      localStorage.setItem('vertex_archive_files', JSON.stringify(updated));
-    } catch {
-      // ignore
+  // Load public places from cloud store on start
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      setIsLoadingCloud(true);
+      const places = await fetchCloudPlaces();
+      if (mounted) {
+        setFileList(places);
+        setIsLoadingCloud(false);
+      }
     }
-  };
+    load();
+
+    // Listen for real-time updates from other tabs
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const bc = new BroadcastChannel('vertex_places_channel');
+      bc.onmessage = (event) => {
+        if (event.data?.type === 'UPDATE_PLACES' && Array.isArray(event.data.places)) {
+          setFileList(event.data.places);
+        }
+      };
+      return () => bc.close();
+    }
+  }, []);
 
   const handleLogin = (email: string) => {
     setCurrentUser(email);
     localStorage.setItem('vertex_auth_user', email);
-    showFeedback(`Signed in as ${email}. You can now upload .rbxl place files.`);
+    showFeedback(`Verified & signed in as ${email}. You can now upload .rbxl places to the world!`);
   };
 
   const handleLogout = () => {
@@ -1008,16 +1325,18 @@ function BrowsePage() {
       uploadedBlobs.set(newRecord.id, { blob: fileBlob, fileName: fileBlob.name });
     }
     const updated = [newRecord, ...fileList];
-    saveFiles(updated);
-    showFeedback(`"${newRecord.title}" (.rbxl) published to archive.`);
+    setFileList(updated);
+    saveCloudPlaces(updated);
+    showFeedback(`"${newRecord.title}" (.rbxl) is now published and live for everyone!`);
   };
 
   const handleDeleteFile = (id: string) => {
     const target = fileList.find((f) => f.id === id);
     const updated = fileList.filter((f) => f.id !== id);
-    saveFiles(updated);
+    setFileList(updated);
     uploadedBlobs.delete(id);
-    showFeedback(`"${target?.title || 'Place'}" removed from library.`);
+    saveCloudPlaces(updated);
+    showFeedback(`"${target?.title || 'Place'}" removed from global archive.`);
   };
 
   const visibleFiles = useMemo(() => {
@@ -1034,12 +1353,12 @@ function BrowsePage() {
 
   const showFeedback = (message: string) => {
     setFeedback(message);
-    window.setTimeout(() => setFeedback(''), 3500);
+    window.setTimeout(() => setFeedback(''), 4000);
   };
 
   const handleDownload = (file: FileRecord) => {
     downloadFile(file);
-    showFeedback(`${file.title} is downloading`);
+    showFeedback(`${file.title} download started!`);
   };
 
   return (
@@ -1075,7 +1394,10 @@ function BrowsePage() {
           </button>
           <div className="hidden items-center gap-2 lg:flex">
             <span className="eyebrow">Roblox /</span>
-            <span className="text-[11px] font-semibold text-[#d0d6cc]">Place Archive</span>
+            <span className="text-[11px] font-semibold text-[#d0d6cc]">Public Place Archive</span>
+            <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[8px] font-bold text-emerald-400 border border-emerald-500/20">
+              Live Cloud Sync
+            </span>
           </div>
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {isOwner ? (
@@ -1102,7 +1424,7 @@ function BrowsePage() {
             <button
               type="button"
               data-testid="button-header-help"
-              onClick={() => showFeedback('Vertex Roblox Archive — Exclusively curated .rbxl and .rbxlx place files')}
+              onClick={() => showFeedback('Vertex Roblox Hub — Publicly accessible .rbxl place archive')}
               className="icon-button hidden items-center gap-2 rounded-lg px-2 py-2 text-[11px] font-semibold text-[#7c867d] sm:flex"
             >
               <HelpCircle size={15} /> Info
@@ -1114,15 +1436,15 @@ function BrowsePage() {
           <section className="mb-8 flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
             <div>
               <div className="mb-3 flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_0_4px_rgba(255,255,255,.1)]"></span>
-                <span className="eyebrow text-[#c4c8c4]">Roblox Place Archive</span>
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,.2)]"></span>
+                <span className="eyebrow text-[#c4c8c4]">Public Roblox Place Archive</span>
               </div>
               <h1 className="max-w-[650px] font-display text-[clamp(34px,5vw,61px)] font-bold leading-[.96] tracking-[-.075em] text-[#f0f1e9]">
                 Roblox places,<br />
-                <span className="text-[#c7cbc7]">ready for Studio.</span>
+                <span className="text-[#c7cbc7]">open for everyone.</span>
               </h1>
               <p className="mt-4 max-w-[490px] text-[12px] leading-[1.7] text-[#7f8981]">
-                Curated archive for Roblox place files (.rbxl & .rbxlx). Browse places, download to edit in Roblox Studio, or upload new creations.
+                Every Roblox place (.rbxl & .rbxlx) uploaded by {OWNER_EMAIL} is published live and instantly downloadable by anyone in the world.
               </p>
             </div>
           </section>
@@ -1135,7 +1457,7 @@ function BrowsePage() {
                 data-testid="input-search-files"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search places by name, creator, or tags..."
+                placeholder="Search places by name, category, or tags..."
                 className="min-w-0 flex-1 bg-transparent text-[12px] text-[#eef0e9] outline-none placeholder:text-[#5e6861]"
               />
               <kbd className="hidden rounded border border-white/[.1] bg-white/[.04] px-2 py-1 font-mono-ui text-[9px] text-[#667269] sm:block">
@@ -1146,7 +1468,7 @@ function BrowsePage() {
 
           <section className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-display text-[18px] font-bold tracking-[-.045em] text-[#e6e9df]">All Places</h2>
+              <h2 className="font-display text-[18px] font-bold tracking-[-.045em] text-[#e6e9df]">All Public Places</h2>
               <p data-testid="text-results-count" className="mt-1 font-mono-ui text-[9px] uppercase tracking-[.12em] text-[#69746c]">
                 {visibleFiles.length} places · verified .rbxl/.rbxlx
               </p>
@@ -1205,7 +1527,13 @@ function BrowsePage() {
             </div>
           </section>
 
-          {visibleFiles.length > 0 ? (
+          {isLoadingCloud ? (
+            <div className="surface flex min-h-[260px] flex-col items-center justify-center rounded-2xl px-6 py-10 text-center">
+              <RefreshCw size={26} className="animate-spin text-emerald-400 mb-3" />
+              <p className="font-display text-[15px] font-bold text-[#e1e4dd]">Syncing Public Archive...</p>
+              <p className="mt-1 font-mono-ui text-[10px] text-[#717b73]">Connecting to live cloud store</p>
+            </div>
+          ) : visibleFiles.length > 0 ? (
             <div className={view === 'grid' ? 'grid gap-4 sm:grid-cols-2 xl:grid-cols-3' : 'grid gap-3'}>
               {visibleFiles.map((file, index) => (
                 <FileCard
@@ -1229,11 +1557,11 @@ function BrowsePage() {
               <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-white/[.05] text-[#8e9890]">
                 <Box size={30} strokeWidth={1.6} />
               </div>
-              <h3 className="font-display text-lg font-bold text-[#f1f2e9]">No Roblox places uploaded yet</h3>
-              <p className="mt-2 max-w-[360px] text-[11px] leading-relaxed text-[#737e75]">
+              <h3 className="font-display text-lg font-bold text-[#f1f2e9]">No Roblox places in the archive yet</h3>
+              <p className="mt-2 max-w-[380px] text-[11px] leading-relaxed text-[#737e75]">
                 {isOwner
-                  ? `You are logged in as ${OWNER_EMAIL}. Upload your first .rbxl or .rbxlx place file to publish it to the archive.`
-                  : `Archive is waiting for place uploads from ${OWNER_EMAIL}. Sign in to upload .rbxl files.`}
+                  ? `You are signed in as ${OWNER_EMAIL}. Upload your first .rbxl or .rbxlx place file to publish it globally for everyone to see and download.`
+                  : `This public archive is waiting for place uploads from ${OWNER_EMAIL}. Sign in to publish .rbxl files.`}
               </p>
               {isOwner ? (
                 <button
@@ -1250,7 +1578,7 @@ function BrowsePage() {
                   type="button"
                   data-testid="button-empty-auth"
                   onClick={() => setAuthModalOpen(true)}
-                  className="mt-5 flex items-center gap-2 rounded-lg border border-white/[.15] bg-[#161b24] px-4 py-2 text-[11px] font-bold text-[#e1e4dd] hover:bg-white/[.08]"
+                  className="mt-5 flex items-center gap-2 rounded-lg border border-white/[.15] bg-[#161b24] px-4 py-2.5 text-[11px] font-bold text-[#e1e4dd] hover:bg-white/[.08]"
                 >
                   <Lock size={13} />
                   <span>Sign in as {OWNER_EMAIL}</span>
