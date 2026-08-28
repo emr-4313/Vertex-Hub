@@ -32,15 +32,18 @@ import {
   Send,
   RefreshCw,
   Globe,
-  Share2,
   Copy,
-  Sparkles,
+  Link,
+  Github,
+  Key,
 } from 'lucide-react';
 import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
 
 const OWNER_EMAIL = 'pukiler23@gmail.com';
-const CLOUD_SYNC_KEY = 'vertex_hub_roblox_places_v2';
-const KV_PUBLIC_STORE = 'https://kvdb.io/3U5gD5yZ6x3s9KzJ9E1w2B/vertex_roblox_places_v2';
+const GITHUB_REPO = 'emr-4313/Vertex-Hub';
+const GITHUB_RAW_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/artifacts/download-library/public/places.json`;
+const LOCAL_STORAGE_KEY = 'vertex_hub_places_local_registry_v1';
+const GITHUB_TOKEN_KEY = 'vertex_hub_gh_token';
 
 type Category = 'Places' | 'Games' | 'Maps' | 'Systems' | 'Templates' | 'Assets';
 
@@ -61,7 +64,8 @@ type FileRecord = {
   updated: string;
   verified: boolean;
   fileName?: string;
-  dataUrl?: string; // base64 encoded place file data shared with all visitors
+  downloadUrl?: string;
+  dataUrl?: string;
 };
 
 const ART_THEMES = [
@@ -112,6 +116,19 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 function downloadFile(file: FileRecord) {
+  // If direct URL is provided
+  if (file.downloadUrl) {
+    const anchor = document.createElement('a');
+    anchor.href = file.downloadUrl;
+    anchor.download = file.fileName || `${file.title.replace(/\s+/g, '_')}.rbxl`;
+    anchor.target = '_blank';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return;
+  }
+
+  // If Base64 dataUrl exists
   if (file.dataUrl) {
     const anchor = document.createElement('a');
     anchor.href = file.dataUrl;
@@ -122,6 +139,7 @@ function downloadFile(file: FileRecord) {
     return;
   }
 
+  // If in-memory custom blob exists
   const custom = uploadedBlobs.get(file.id);
   if (custom) {
     const url = URL.createObjectURL(custom.blob);
@@ -135,6 +153,7 @@ function downloadFile(file: FileRecord) {
     return;
   }
 
+  // Fallback direct place generator
   const content = `ROBLOX PLACE FILE NOTE\n\nTitle: ${file.title}\nFormat: RBXL / RBXLX\nCreator: ${file.author}\n\nDescription: ${file.description}\nTags: ${file.tags.join(', ')}\n`;
   const blob = new Blob([content], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
@@ -147,61 +166,112 @@ function downloadFile(file: FileRecord) {
   URL.revokeObjectURL(url);
 }
 
-// Cloud Storage Helpers for Public Sync across all users
-async function fetchCloudPlaces(): Promise<FileRecord[]> {
+// Fetch all public places from GitHub raw CDN + local places
+async function loadPublicPlaces(): Promise<FileRecord[]> {
+  const listMap = new Map<string, FileRecord>();
+
+  // 1. Try fetching from GitHub raw CDN
   try {
-    const res = await fetch(KV_PUBLIC_STORE, {
-      method: 'GET',
+    const res = await fetch(`${GITHUB_RAW_URL}?nocache=${Date.now()}`, {
       headers: { 'Cache-Control': 'no-cache' },
     });
     if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        try {
-          localStorage.setItem(CLOUD_SYNC_KEY, JSON.stringify(data));
-        } catch {}
-        return data;
+      const gitPlaces: FileRecord[] = await res.json();
+      if (Array.isArray(gitPlaces)) {
+        gitPlaces.forEach((p) => listMap.set(p.id, p));
       }
     }
-  } catch (e) {
-    console.log('Cloud sync info: using local cache');
+  } catch (err) {
+    console.log('GitHub Raw sync:', err);
   }
 
+  // 2. Try fetching from relative bundled public/places.json
   try {
-    const cached = localStorage.getItem(CLOUD_SYNC_KEY);
-    if (cached) {
-      return JSON.parse(cached);
+    const basePath = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+    const res = await fetch(`${basePath}/places.json?nocache=${Date.now()}`);
+    if (res.ok) {
+      const bundledPlaces: FileRecord[] = await res.json();
+      if (Array.isArray(bundledPlaces)) {
+        bundledPlaces.forEach((p) => listMap.set(p.id, p));
+      }
     }
-  } catch {}
+  } catch (err) {
+    console.log('Bundled places sync:', err);
+  }
 
-  return [];
+  // 3. Merge with local creator storage
+  try {
+    const local = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (local) {
+      const localPlaces: FileRecord[] = JSON.parse(local);
+      if (Array.isArray(localPlaces)) {
+        localPlaces.forEach((p) => {
+          if (!listMap.has(p.id)) listMap.set(p.id, p);
+        });
+      }
+    }
+  } catch (err) {
+    console.log('Local storage sync:', err);
+  }
+
+  return Array.from(listMap.values());
 }
 
-async function saveCloudPlaces(places: FileRecord[]): Promise<void> {
-  // 1. Save to local storage cache immediately
+// Save places to GitHub repository via GitHub REST API if token is configured
+async function syncPlacesToGitHub(places: FileRecord[], token: string): Promise<{ success: boolean; message: string }> {
   try {
-    localStorage.setItem(CLOUD_SYNC_KEY, JSON.stringify(places));
-  } catch (e) {
-    console.warn('LocalStorage limit:', e);
-  }
+    const filePath = 'artifacts/download-library/public/places.json';
+    const apiUrl = `https://api.github.com/repos/${GITHUB_REPO}/contents/${filePath}`;
 
-  // 2. Broadcast to any open tabs on this browser
-  try {
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      const bc = new BroadcastChannel('vertex_places_channel');
-      bc.postMessage({ type: 'UPDATE_PLACES', places });
-    }
-  } catch {}
+    // Get current SHA
+    let sha = '';
+    try {
+      const getRes = await fetch(apiUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+        },
+      });
+      if (getRes.ok) {
+        const fileInfo = await getRes.json();
+        sha = fileInfo.sha;
+      }
+    } catch {}
 
-  // 3. Persist to public KV store for all other visitors
-  try {
-    await fetch(KV_PUBLIC_STORE, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(places),
+    // Clean payload (don't push massive dataUrls to places.json, keep metadata & downloadUrls)
+    const sanitizedPlaces = places.map((p) => ({
+      ...p,
+      dataUrl: p.dataUrl && p.dataUrl.length > 50000 ? undefined : p.dataUrl,
+    }));
+
+    const contentUtf8 = JSON.stringify(sanitizedPlaces, null, 2);
+    // Base64 encode in browser
+    const contentBase64 = btoa(unescape(encodeURIComponent(contentUtf8)));
+
+    const body: any = {
+      message: `Update places archive (${places.length} places) [skip ci]`,
+      content: contentBase64,
+    };
+    if (sha) body.sha = sha;
+
+    const putRes = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/vnd.github+json',
+      },
+      body: JSON.stringify(body),
     });
-  } catch (err) {
-    console.log('Public cloud sync write:', err);
+
+    if (putRes.ok) {
+      return { success: true, message: 'Published directly to GitHub! All users will see this update.' };
+    } else {
+      const errData = await putRes.json();
+      return { success: false, message: errData.message || 'GitHub API rejected request.' };
+    }
+  } catch (err: any) {
+    return { success: false, message: err.message || 'Failed to connect to GitHub.' };
   }
 }
 
@@ -258,7 +328,6 @@ function AuthModal({
     setError('');
     setIsSending(true);
 
-    // Generate 6-digit random verification code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     setGeneratedCode(code);
 
@@ -269,7 +338,7 @@ function AuthModal({
       setCodeNotification(code);
       setCodeInputs(['', '', '', '', '', '']);
       setTimeout(() => inputRefs.current[0]?.focus(), 150);
-    }, 600);
+    }, 500);
   };
 
   const handleCodeChange = (index: number, val: string) => {
@@ -393,7 +462,7 @@ function AuthModal({
                   <ShieldCheck size={14} className="text-emerald-400" /> Security Verification
                 </p>
                 <p className="mt-1 text-[10px] text-[#717b73]">
-                  A 6-digit authorization code will be sent for verification to authenticate upload access.
+                  A 6-digit authorization code will be generated to authenticate creator permissions for {OWNER_EMAIL}.
                 </p>
               </div>
             </div>
@@ -416,7 +485,7 @@ function AuthModal({
                 {isSending ? (
                   <>
                     <RefreshCw size={13} className="animate-spin" />
-                    <span>Sending Code...</span>
+                    <span>Generating Code...</span>
                   </>
                 ) : (
                   <>
@@ -435,7 +504,7 @@ function AuthModal({
                   <div className="flex items-center gap-2">
                     <Mail size={15} className="text-emerald-400" />
                     <span className="text-[11px] font-bold text-emerald-200">
-                      Code Sent to {OWNER_EMAIL}
+                      Code for {OWNER_EMAIL}
                     </span>
                   </div>
                   <button
@@ -471,7 +540,7 @@ function AuthModal({
                     value={digit}
                     onChange={(e) => handleCodeChange(idx, e.target.value)}
                     onKeyDown={(e) => handleKeyDown(idx, e)}
-                    className="h-12 w-11 text-center font-display text-[18px] font-extrabold text-[#f1f2e9] rounded-xl border border-white/[.15] bg-[#12161f] outline-none transition-all focus:border-white focus:bg-white/[.08] focus:shadow-[0_0_15px_rgba(255,255,255,.1)]"
+                    className="h-12 w-11 text-center font-display text-[18px] font-extrabold text-[#f1f2e9] rounded-xl border border-white/[.15] bg-[#12161f] outline-none transition-all focus:border-white focus:bg-white/[.08]"
                   />
                 ))}
               </div>
@@ -591,7 +660,7 @@ function Sidebar({
               </div>
               <div className="min-w-0">
                 <p className="truncate text-[10px] font-bold text-[#e1e4dd]">{currentUser}</p>
-                <p className="font-mono-ui text-[8px] text-amber-400/90 uppercase tracking-wider">Creator</p>
+                <p className="font-mono-ui text-[8px] text-amber-400/90 uppercase tracking-wider">Verified Creator</p>
               </div>
             </div>
             <button
@@ -829,7 +898,7 @@ function UploadModal({
   isOwner: boolean;
   onClose: () => void;
   onOpenAuth: () => void;
-  onUpload: (newFile: FileRecord, fileBlob?: File) => void;
+  onUpload: (newFile: FileRecord, fileBlob?: File, ghToken?: string) => Promise<void>;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -839,9 +908,11 @@ function UploadModal({
   const [tagsInput, setTagsInput] = useState('');
   const [art, setArt] = useState<string>('art-cobalt');
   const [artLabel, setArtLabel] = useState('');
+  const [externalUrl, setExternalUrl] = useState('');
+  const [githubToken, setGithubToken] = useState(() => localStorage.getItem(GITHUB_TOKEN_KEY) || '');
   const [fileError, setFileError] = useState('');
   const [isDragging, setIsDragging] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -852,9 +923,10 @@ function UploadModal({
       setTagsInput('');
       setArt('art-cobalt');
       setArtLabel('');
+      setExternalUrl('');
       setFileError('');
       setIsDragging(false);
-      setIsProcessing(false);
+      setIsPublishing(false);
     }
   }, [isOpen]);
 
@@ -934,19 +1006,25 @@ function UploadModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFile) {
-      setFileError('Please select a .rbxl or .rbxlx file to upload.');
+    if (!selectedFile && !externalUrl.trim()) {
+      setFileError('Please select a .rbxl/.rbxlx file or provide a direct download URL.');
       return;
     }
     if (!title.trim()) return;
 
-    setIsProcessing(true);
+    setIsPublishing(true);
+
+    if (githubToken.trim()) {
+      localStorage.setItem(GITHUB_TOKEN_KEY, githubToken.trim());
+    }
 
     let dataUrl = '';
-    try {
-      dataUrl = await fileToBase64(selectedFile);
-    } catch (err) {
-      console.warn('File encoding:', err);
+    if (selectedFile) {
+      try {
+        dataUrl = await fileToBase64(selectedFile);
+      } catch (err) {
+        console.warn('File conversion:', err);
+      }
     }
 
     const tags = tagsInput
@@ -954,7 +1032,7 @@ function UploadModal({
       .map((t) => t.trim().toLowerCase().replace(/^#/, ''))
       .filter(Boolean);
 
-    const ext = selectedFile.name.split('.').pop()?.toLowerCase() || 'rbxl';
+    const ext = selectedFile?.name.split('.').pop()?.toLowerCase() || 'rbxl';
     const finalTags = Array.from(new Set(['roblox', ext, ...tags]));
 
     const newRecord: FileRecord = {
@@ -963,7 +1041,7 @@ function UploadModal({
       category,
       author: 'pukiler23',
       initials: 'PU',
-      size: formatBytes(selectedFile.size),
+      size: selectedFile ? formatBytes(selectedFile.size) : 'Roblox Place',
       downloads: '0',
       rating: 5.0,
       reviews: 1,
@@ -973,12 +1051,13 @@ function UploadModal({
       artLabel: artLabel.trim() || title.trim().toUpperCase().slice(0, 10),
       updated: 'Just now',
       verified: true,
-      fileName: selectedFile.name,
-      dataUrl,
+      fileName: selectedFile ? selectedFile.name : `${title.trim().replace(/\s+/g, '_')}.rbxl`,
+      downloadUrl: externalUrl.trim() || undefined,
+      dataUrl: dataUrl || undefined,
     };
 
-    onUpload(newRecord, selectedFile);
-    setIsProcessing(false);
+    await onUpload(newRecord, selectedFile || undefined, githubToken.trim());
+    setIsPublishing(false);
     onClose();
   };
 
@@ -992,7 +1071,7 @@ function UploadModal({
         aria-label="Close modal"
       />
       <div
-        className="toast-in surface relative max-h-[92vh] w-full max-w-[620px] overflow-y-auto rounded-2xl border border-white/[.12] p-6 shadow-2xl"
+        className="toast-in surface relative max-h-[92vh] w-full max-w-[640px] overflow-y-auto rounded-2xl border border-white/[.12] p-6 shadow-2xl"
         role="dialog"
         aria-modal="true"
       >
@@ -1002,9 +1081,9 @@ function UploadModal({
               <FileUp size={19} />
             </div>
             <div>
-              <h2 className="font-display text-[17px] font-bold text-[#f1f2e9]">Upload Roblox Place</h2>
+              <h2 className="font-display text-[17px] font-bold text-[#f1f2e9]">Publish Roblox Place</h2>
               <p className="font-mono-ui text-[9px] uppercase tracking-[.14em] text-emerald-400">
-                Visible to Everyone · {OWNER_EMAIL}
+                Global Public Archive · {OWNER_EMAIL}
               </p>
             </div>
           </div>
@@ -1081,6 +1160,23 @@ function UploadModal({
                 <AlertCircle size={12} /> {fileError}
               </p>
             )}
+          </div>
+
+          {/* Direct Link Alternative */}
+          <div>
+            <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
+              Direct Download URL (Optional external / Catbox / Drive link)
+            </label>
+            <div className="relative">
+              <input
+                type="url"
+                value={externalUrl}
+                onChange={(e) => setExternalUrl(e.target.value)}
+                placeholder="https://... (direct .rbxl download link)"
+                className="w-full rounded-lg border border-white/[.1] bg-[#12161f] px-3.5 py-2 text-[12px] text-[#eef0e9] outline-none placeholder:text-[#525b55] focus:border-white/50"
+              />
+              <Link size={14} className="absolute right-3 top-2.5 text-[#636e65]" />
+            </div>
           </div>
 
           {/* Title & Category */}
@@ -1188,29 +1284,27 @@ function UploadModal({
             </div>
           </div>
 
-          {/* Live Mini Preview */}
-          <div>
-            <label className="mb-1.5 block font-mono-ui text-[10px] uppercase tracking-[.14em] text-[#8e9890]">
-              Card Preview
-            </label>
-            <div className="overflow-hidden rounded-xl border border-white/[.08] bg-[#141822]">
-              <div className={`preview-art ${art} relative h-[80px] p-3`}>
-                <span className="rounded bg-black/40 px-1.5 py-0.5 font-mono-ui text-[7px] tracking-[.14em] text-white/90">
-                  {category.toUpperCase()} · RBXL
-                </span>
-                <div className="mt-1 font-display text-[16px] font-bold text-white/90">
-                  {artLabel || title.toUpperCase() || 'ROBLOX PLACE'}
-                </div>
-              </div>
-              <div className="p-3">
-                <div className="text-[11px] font-bold text-[#e8ebe2]">
-                  {title || 'Untitled Place'}
-                </div>
-                <div className="mt-0.5 text-[9px] text-[#808b82]">
-                  By pukiler23 · {selectedFile ? formatBytes(selectedFile.size) : '0 Bytes'}
-                </div>
-              </div>
+          {/* GitHub Auto-Publish Token (Optional) */}
+          <div className="rounded-xl border border-white/[.08] bg-[#131720] p-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="flex items-center gap-1.5 font-mono-ui text-[10px] uppercase tracking-[.12em] text-[#9aa49a]">
+                <Github size={13} /> 1-Click Global Sync (GitHub Token)
+              </label>
+              <span className="text-[9px] text-[#717b73]">Optional · Saved locally</span>
             </div>
+            <div className="relative">
+              <input
+                type="password"
+                value={githubToken}
+                onChange={(e) => setGithubToken(e.target.value)}
+                placeholder="github_pat_... (with repo write permissions)"
+                className="w-full rounded-lg border border-white/[.1] bg-[#0e1118] px-3 py-2 text-[11px] text-[#eef0e9] outline-none placeholder:text-[#4a534d] focus:border-white/40 font-mono"
+              />
+              <Key size={13} className="absolute right-3 top-2.5 text-[#636e65]" />
+            </div>
+            <p className="mt-1 text-[9px] text-[#6b766f]">
+              Providing a GitHub token enables direct 1-click publishing to the repository so all global visitors see the update immediately.
+            </p>
           </div>
 
           {/* Actions */}
@@ -1225,19 +1319,19 @@ function UploadModal({
             </button>
             <button
               type="submit"
-              disabled={!selectedFile || !title.trim() || isProcessing}
+              disabled={(!selectedFile && !externalUrl.trim()) || !title.trim() || isPublishing}
               data-testid="button-submit-upload"
               className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-[11px] font-extrabold text-[#171a1f] shadow-md transition-all hover:bg-[#e4e7dd] disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {isProcessing ? (
+              {isPublishing ? (
                 <>
                   <RefreshCw size={13} className="animate-spin" />
-                  <span>Syncing to Cloud...</span>
+                  <span>Publishing Globally...</span>
                 </>
               ) : (
                 <>
                   <Globe size={13} strokeWidth={2.4} />
-                  <span>Publish to Everyone</span>
+                  <span>Publish to Global Archive</span>
                 </>
               )}
             </button>
@@ -1272,7 +1366,7 @@ function BrowsePage() {
   const isOwner = currentUser?.toLowerCase() === OWNER_EMAIL.toLowerCase();
 
   const [fileList, setFileList] = useState<FileRecord[]>([]);
-  const [isLoadingCloud, setIsLoadingCloud] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<'Newest' | 'Most downloaded' | 'Top rated'>('Newest');
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -1283,35 +1377,21 @@ function BrowsePage() {
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [sortOpen, setSortOpen] = useState(false);
 
-  // Load public places from cloud store on start
-  useEffect(() => {
-    let mounted = true;
-    async function load() {
-      setIsLoadingCloud(true);
-      const places = await fetchCloudPlaces();
-      if (mounted) {
-        setFileList(places);
-        setIsLoadingCloud(false);
-      }
-    }
-    load();
+  const refreshPlaces = async () => {
+    setIsLoading(true);
+    const places = await loadPublicPlaces();
+    setFileList(places);
+    setIsLoading(false);
+  };
 
-    // Listen for real-time updates from other tabs
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      const bc = new BroadcastChannel('vertex_places_channel');
-      bc.onmessage = (event) => {
-        if (event.data?.type === 'UPDATE_PLACES' && Array.isArray(event.data.places)) {
-          setFileList(event.data.places);
-        }
-      };
-      return () => bc.close();
-    }
+  useEffect(() => {
+    refreshPlaces();
   }, []);
 
   const handleLogin = (email: string) => {
     setCurrentUser(email);
     localStorage.setItem('vertex_auth_user', email);
-    showFeedback(`Verified & signed in as ${email}. You can now upload .rbxl places to the world!`);
+    showFeedback(`Signed in as ${email}. You have full creator privileges.`);
   };
 
   const handleLogout = () => {
@@ -1320,23 +1400,56 @@ function BrowsePage() {
     showFeedback('Signed out of creator mode.');
   };
 
-  const handleUploadNewFile = (newRecord: FileRecord, fileBlob?: File) => {
+  const handleUploadNewFile = async (newRecord: FileRecord, fileBlob?: File, ghToken?: string) => {
     if (fileBlob) {
       uploadedBlobs.set(newRecord.id, { blob: fileBlob, fileName: fileBlob.name });
     }
     const updated = [newRecord, ...fileList];
     setFileList(updated);
-    saveCloudPlaces(updated);
-    showFeedback(`"${newRecord.title}" (.rbxl) is now published and live for everyone!`);
+
+    // Save locally
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+    } catch {}
+
+    // If GitHub token is present, sync to repo
+    if (ghToken) {
+      const syncRes = await syncPlacesToGitHub(updated, ghToken);
+      showFeedback(syncRes.message);
+    } else {
+      showFeedback(`"${newRecord.title}" (.rbxl) published to archive!`);
+    }
   };
 
-  const handleDeleteFile = (id: string) => {
+  const handleDeleteFile = async (id: string) => {
     const target = fileList.find((f) => f.id === id);
     const updated = fileList.filter((f) => f.id !== id);
     setFileList(updated);
     uploadedBlobs.delete(id);
-    saveCloudPlaces(updated);
-    showFeedback(`"${target?.title || 'Place'}" removed from global archive.`);
+
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+    } catch {}
+
+    const token = localStorage.getItem(GITHUB_TOKEN_KEY);
+    if (token) {
+      await syncPlacesToGitHub(updated, token);
+    }
+
+    showFeedback(`"${target?.title || 'Place'}" removed.`);
+  };
+
+  const exportPlacesJson = () => {
+    const blob = new Blob([JSON.stringify(fileList, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'places.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showFeedback('Exported places.json for GitHub commit');
   };
 
   const visibleFiles = useMemo(() => {
@@ -1353,12 +1466,12 @@ function BrowsePage() {
 
   const showFeedback = (message: string) => {
     setFeedback(message);
-    window.setTimeout(() => setFeedback(''), 4000);
+    window.setTimeout(() => setFeedback(''), 4500);
   };
 
   const handleDownload = (file: FileRecord) => {
     downloadFile(file);
-    showFeedback(`${file.title} download started!`);
+    showFeedback(`${file.title} downloading`);
   };
 
   return (
@@ -1395,11 +1508,28 @@ function BrowsePage() {
           <div className="hidden items-center gap-2 lg:flex">
             <span className="eyebrow">Roblox /</span>
             <span className="text-[11px] font-semibold text-[#d0d6cc]">Public Place Archive</span>
-            <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[8px] font-bold text-emerald-400 border border-emerald-500/20">
-              Live Cloud Sync
-            </span>
+            <button
+              type="button"
+              onClick={refreshPlaces}
+              title="Refresh public archive"
+              className="ml-2 flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[8px] font-bold text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20"
+            >
+              <RefreshCw size={9} className={isLoading ? 'animate-spin' : ''} />
+              <span>Synced</span>
+            </button>
           </div>
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            {isOwner && fileList.length > 0 && (
+              <button
+                type="button"
+                onClick={exportPlacesJson}
+                className="hidden sm:flex items-center gap-1.5 rounded-lg border border-white/[.12] bg-[#161b24] px-2.5 py-1.5 text-[10px] font-bold text-[#c7cfc5] hover:bg-white/[.08] hover:text-white"
+                title="Download places.json for GitHub commit"
+              >
+                <Github size={12} />
+                <span>Export places.json</span>
+              </button>
+            )}
             {isOwner ? (
               <button
                 type="button"
@@ -1424,7 +1554,7 @@ function BrowsePage() {
             <button
               type="button"
               data-testid="button-header-help"
-              onClick={() => showFeedback('Vertex Roblox Hub — Publicly accessible .rbxl place archive')}
+              onClick={() => showFeedback('Vertex Roblox Hub — Exclusively curated .rbxl and .rbxlx place files')}
               className="icon-button hidden items-center gap-2 rounded-lg px-2 py-2 text-[11px] font-semibold text-[#7c867d] sm:flex"
             >
               <HelpCircle size={15} /> Info
@@ -1444,7 +1574,7 @@ function BrowsePage() {
                 <span className="text-[#c7cbc7]">open for everyone.</span>
               </h1>
               <p className="mt-4 max-w-[490px] text-[12px] leading-[1.7] text-[#7f8981]">
-                Every Roblox place (.rbxl & .rbxlx) uploaded by {OWNER_EMAIL} is published live and instantly downloadable by anyone in the world.
+                Curated archive for Roblox place files (.rbxl & .rbxlx). Places published by {OWNER_EMAIL} are accessible to all visitors worldwide.
               </p>
             </div>
           </section>
@@ -1527,11 +1657,11 @@ function BrowsePage() {
             </div>
           </section>
 
-          {isLoadingCloud ? (
+          {isLoading ? (
             <div className="surface flex min-h-[260px] flex-col items-center justify-center rounded-2xl px-6 py-10 text-center">
               <RefreshCw size={26} className="animate-spin text-emerald-400 mb-3" />
-              <p className="font-display text-[15px] font-bold text-[#e1e4dd]">Syncing Public Archive...</p>
-              <p className="mt-1 font-mono-ui text-[10px] text-[#717b73]">Connecting to live cloud store</p>
+              <p className="font-display text-[15px] font-bold text-[#e1e4dd]">Loading Public Places...</p>
+              <p className="mt-1 font-mono-ui text-[10px] text-[#717b73]">Syncing from GitHub CDN</p>
             </div>
           ) : visibleFiles.length > 0 ? (
             <div className={view === 'grid' ? 'grid gap-4 sm:grid-cols-2 xl:grid-cols-3' : 'grid gap-3'}>
@@ -1560,7 +1690,7 @@ function BrowsePage() {
               <h3 className="font-display text-lg font-bold text-[#f1f2e9]">No Roblox places in the archive yet</h3>
               <p className="mt-2 max-w-[380px] text-[11px] leading-relaxed text-[#737e75]">
                 {isOwner
-                  ? `You are signed in as ${OWNER_EMAIL}. Upload your first .rbxl or .rbxlx place file to publish it globally for everyone to see and download.`
+                  ? `You are signed in as ${OWNER_EMAIL}. Upload your first .rbxl or .rbxlx place file to publish it globally for everyone.`
                   : `This public archive is waiting for place uploads from ${OWNER_EMAIL}. Sign in to publish .rbxl files.`}
               </p>
               {isOwner ? (
