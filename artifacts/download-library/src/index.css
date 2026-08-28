@@ -136,6 +136,15 @@ body::before {
 .cookie-in { animation: cookie-in .34s both; }
 .search-input:focus-within { border-color: rgba(255,255,255,.6); box-shadow: 0 0 0 3px rgba(255,255,255,.08); }
 
+.art-cobalt { background: linear-gradient(135deg, #1d4ed8 0%, #0f172a 100%); }
+.art-amber { background: linear-gradient(135deg, #b45309 0%, #1c1917 100%); }
+.art-plum { background: linear-gradient(135deg, #7e22ce 0%, #18181b 100%); }
+.art-mint { background: linear-gradient(135deg, #047857 0%, #0f172a 100%); }
+.art-lilac { background: linear-gradient(135deg, #6d28d9 0%, #1e1b4b 100%); }
+.art-teal { background: linear-gradient(135deg, #0f766e 0%, #042f2e 100%); }
+.art-coral { background: linear-gradient(135deg, #b91c1c 0%, #292524 100%); }
+.art-slate { background: linear-gradient(135deg, #475569 0%, #0f172a 100%); }
+
 @keyframes card-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes drawer-in { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: translateX(0); } }
