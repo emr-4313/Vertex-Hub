@@ -32,19 +32,24 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
       - name: Build frontend for GitHub Pages
-        run: pnpm --filter @workspace/download-library run build
+        run: |
+          pnpm --filter @workspace/download-library run build
+          touch artifacts/download-library/dist/public/.nojekyll
+          cp artifacts/download-library/dist/public/index.html artifacts/download-library/dist/public/404.html
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
