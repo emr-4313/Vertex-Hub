@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Download Library"
+description = "A dark, community-powered download library where people can browse, search, and download curated digital files with clear stats and simple discovery."
+version = "1.0.0"
+id = "artifacts/download-library"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20251
+
+[services.development]
+run = "pnpm --filter @workspace/download-library run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/download-library", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/download-library/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20251"
+BASE_PATH = "/"
