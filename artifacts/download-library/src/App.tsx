@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/toaster';
 import { ErrorBoundary } from '@/components/error-boundary';
-import { Download, Search, Menu, X, Heart, Star, Check, ChevronDown, Clock3, FileArchive, Sparkles, SlidersHorizontal, ArrowUpRight, ShieldCheck, BadgeCheck, FolderOpen, LayoutGrid, List, HelpCircle } from 'lucide-react';
+import { Download, Search, Menu, X, Heart, Star, Check, ChevronDown, FileArchive, Sparkles, SlidersHorizontal, ArrowUpRight, ShieldCheck, BadgeCheck, LayoutGrid, List, HelpCircle } from 'lucide-react';
 import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
 
 type Category = 'Design' | 'Templates' | 'Audio' | 'Video' | 'Code' | 'Documents';
@@ -51,13 +51,8 @@ function downloadFile(file: FileRecord) {
   URL.revokeObjectURL(url);
 }
 
-function Sidebar({ active, onAction }: { active: string; onAction: () => void }) {
+function Sidebar({ active }: { active: string }) {
   const [, setLocation] = useLocation();
-  const items = [
-    { label: 'Browse library', icon: LayoutGrid, path: '/' },
-    { label: 'Recent additions', icon: Clock3, path: '/recent' },
-    { label: 'Saved files', icon: Heart, path: '/saved' },
-  ];
   return (
     <aside className="sidebar hidden w-[248px] shrink-0 border-r border-white/[.07] px-4 py-5 lg:flex lg:flex-col">
       <div className="mb-10 flex items-center gap-3 px-3">
@@ -71,18 +66,9 @@ function Sidebar({ active, onAction }: { active: string; onAction: () => void })
       </div>
       <div className="mb-3 px-3 eyebrow">Workspace</div>
       <nav className="space-y-1" aria-label="Primary navigation">
-        {items.map((item) => {
-          const Icon = item.icon;
-          const isActive = active === item.label;
-          return <button key={item.label} type="button" data-testid={`nav-${item.label.toLowerCase().replaceAll(' ', '-')}`} data-active={isActive} onClick={() => { setLocation(item.path); }} className="nav-item flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#8a928c]">
-            <Icon size={16} strokeWidth={1.8} /><span>{item.label}</span>{item.label === 'Saved files' && <span className="ml-auto rounded-full bg-white/[.06] px-1.5 py-0.5 font-mono-ui text-[9px] text-[#747b75]">4</span>}
-          </button>;
-        })}
-      </nav>
-      <div className="mb-3 mt-9 px-3 eyebrow">Explore</div>
-      <nav className="space-y-1">
-        <button type="button" data-testid="nav-collections" onClick={() => onAction()} className="nav-item flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#8a928c]"><FolderOpen size={16} strokeWidth={1.8} /><span>Curated collections</span></button>
-        <button type="button" data-testid="nav-guidelines" onClick={() => onAction()} className="nav-item flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#8a928c]"><ShieldCheck size={16} strokeWidth={1.8} /><span>Archive guidelines</span></button>
+        <button type="button" data-testid="nav-browse-library" data-active={active === 'Browse library'} onClick={() => setLocation('/')} className="nav-item flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#8a928c]">
+          <LayoutGrid size={16} strokeWidth={1.8} /><span>Browse library</span>
+        </button>
       </nav>
        <div className="mt-auto rounded-xl border border-white/[.1] bg-white/[.04] p-4">
          <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-[#d7dbd6]"><BadgeCheck size={14} className="text-[hsl(var(--primary))]" /> Keep it useful</div>
@@ -103,8 +89,6 @@ function MobileDrawer({ onClose }: { onClose: () => void }) {
       <div className="mb-10 flex items-center justify-between px-3"><div className="flex items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-xl bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"><FileArchive size={19} /></div><div className="font-display text-[19px] font-bold tracking-[-.05em]">Vertex</div></div><button type="button" data-testid="button-close-drawer" onClick={onClose} className="icon-button rounded-md p-2 text-[#818982]" aria-label="Close menu"><X size={18} /></button></div>
       <div className="mb-3 px-3 eyebrow">Workspace</div>
       <button type="button" data-testid="mobile-nav-browse" onClick={onClose} className="nav-item flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#cfd6cb]"><LayoutGrid size={16} /> Browse library</button>
-      <button type="button" data-testid="mobile-nav-recent" onClick={onClose} className="nav-item flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#8a928c]"><Clock3 size={16} /> Recent additions</button>
-      <button type="button" data-testid="mobile-nav-saved" onClick={onClose} className="nav-item flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold text-[#8a928c]"><Heart size={16} /> Saved files <span className="ml-auto rounded-full bg-white/[.06] px-1.5 py-0.5 font-mono-ui text-[9px]">4</span></button>
     </aside>
   </div>;
 }
@@ -155,7 +139,7 @@ function BrowsePage() {
   const handleGuidelines = () => showFeedback('Guidelines: be specific, be generous, be legal');
 
   return <div className="app-shell flex text-[#e7e9e0]">
-    <Sidebar active="Browse library" onAction={handleGuidelines} />
+    <Sidebar active="Browse library" />
     {drawerOpen && <MobileDrawer onClose={() => setDrawerOpen(false)} />}
     <main className="min-w-0 flex-1">
       <header className="topbar sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-white/[.07] px-4 sm:px-7 lg:px-10">
